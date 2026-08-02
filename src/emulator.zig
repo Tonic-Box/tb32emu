@@ -36,6 +36,7 @@ pub const Status = union(enum) {
     exited: i32,
     waiting_input,
     sleep_ms: u32,
+    breakpoint: u32,
     fault: struct { code: u32, pc: u32 },
 };
 
@@ -55,6 +56,8 @@ pub const Emulator = struct {
     stdin_pos: usize,
     out: std.ArrayList(u8),
     start_ms: i64,
+    breakpoints: std.AutoHashMap(u32, void),
+    just_hit_bp: bool,
 
     pub fn init(gpa: std.mem.Allocator) !Emulator {
         const ram = try gpa.alloc(u8, MEM_SIZE);
@@ -70,6 +73,8 @@ pub const Emulator = struct {
             .stdin_pos = 0,
             .out = std.ArrayList(u8).init(gpa),
             .start_ms = 0,
+            .breakpoints = std.AutoHashMap(u32, void).init(gpa),
+            .just_hit_bp = false,
         };
     }
 
@@ -89,6 +94,7 @@ pub const Emulator = struct {
         self.brk = info.brk;
         self.raw = false;
         self.started = true;
+        self.just_hit_bp = false;
         self.stdin.clearRetainingCapacity();
         self.stdin_pos = 0;
         self.out.clearRetainingCapacity();
@@ -99,6 +105,19 @@ pub const Emulator = struct {
         self.gpa.free(self.ram);
         self.stdin.deinit();
         self.out.deinit();
+        self.breakpoints.deinit();
+    }
+
+    pub fn hasBreak(self: *Emulator, addr: u32) bool {
+        return self.breakpoints.contains(addr);
+    }
+
+    pub fn setBreak(self: *Emulator, addr: u32, on: bool) void {
+        if (on) {
+            self.breakpoints.put(addr, {}) catch {};
+        } else {
+            _ = self.breakpoints.remove(addr);
+        }
     }
 
     pub fn feedInput(self: *Emulator, bytes: []const u8) !void {
@@ -123,22 +142,47 @@ pub const Emulator = struct {
         if (!self.started) return .{ .exited = 0 };
         var i: u32 = 0;
         while (i < max_steps) : (i += 1) {
-            switch (tb32.step(&self.cpu, &self.bus)) {
-                .ok, .breakpoint => {},
-                .halt => return .halted,
-                .fault => return .{ .fault = .{ .code = self.cpu.trap, .pc = self.cpu.insn_pc } },
-                .syscall => switch (self.service()) {
-                    .cont => {},
-                    .exit => |code| return .{ .exited = code },
-                    .waiting => {
-                        self.cpu.pc = self.cpu.insn_pc;
-                        return .waiting_input;
-                    },
-                    .sleep => |ms| return .{ .sleep_ms = ms },
-                },
+            if (!self.just_hit_bp and self.breakpoints.contains(self.cpu.pc)) {
+                self.just_hit_bp = true;
+                return .{ .breakpoint = self.cpu.pc };
+            }
+            self.just_hit_bp = false;
+            switch (self.oneStep()) {
+                .cont => {},
+                .stop => |s| return s,
             }
         }
         return .running;
+    }
+
+    /// Executes exactly one instruction regardless of breakpoints and returns why it
+    /// stopped. `.running` means the instruction retired and the machine is still live.
+    pub fn stepOne(self: *Emulator) Status {
+        if (!self.started) return .{ .exited = 0 };
+        self.just_hit_bp = false;
+        return switch (self.oneStep()) {
+            .cont => .running,
+            .stop => |s| s,
+        };
+    }
+
+    const StepOutcome = union(enum) { cont, stop: Status };
+
+    fn oneStep(self: *Emulator) StepOutcome {
+        switch (tb32.step(&self.cpu, &self.bus)) {
+            .ok, .breakpoint => return .cont,
+            .halt => return .{ .stop = .halted },
+            .fault => return .{ .stop = .{ .fault = .{ .code = self.cpu.trap, .pc = self.cpu.insn_pc } } },
+            .syscall => switch (self.service()) {
+                .cont => return .cont,
+                .exit => |code| return .{ .stop = .{ .exited = code } },
+                .waiting => {
+                    self.cpu.pc = self.cpu.insn_pc;
+                    return .{ .stop = .waiting_input };
+                },
+                .sleep => |ms| return .{ .stop = .{ .sleep_ms = ms } },
+            },
+        }
     }
 
     fn setR1(self: *Emulator, v: u32) void {
@@ -342,4 +386,43 @@ test "getrandom is reproducible under no seed only across calls" {
     try emu.start(src, &diag);
     const st = emu.tick(100000);
     try std.testing.expect(st == .halted);
+}
+
+test "breakpoint halts at the right pc and continue resumes" {
+    const a = std.testing.allocator;
+    var emu = try Emulator.init(a);
+    defer emu.deinit();
+    var diag: tb32.Diagnostic = .{};
+    const src =
+        \\.text
+        \\.entry _start
+        \\_start:
+        \\    nop
+        \\    nop
+        \\    hlt
+    ;
+    try emu.start(src, &diag);
+    emu.setBreak(0x1008, true);
+    const st = emu.tick(100);
+    try std.testing.expect(st == .breakpoint);
+    try std.testing.expectEqual(@as(u32, 0x1008), emu.cpu.pc);
+    try std.testing.expect(emu.tick(100) == .halted);
+}
+
+test "stepOne advances exactly one instruction" {
+    const a = std.testing.allocator;
+    var emu = try Emulator.init(a);
+    defer emu.deinit();
+    var diag: tb32.Diagnostic = .{};
+    const src =
+        \\.text
+        \\.entry _start
+        \\_start:
+        \\    nop
+        \\    hlt
+    ;
+    try emu.start(src, &diag);
+    const pc0 = emu.cpu.pc;
+    _ = emu.stepOne();
+    try std.testing.expectEqual(pc0 + 4, emu.cpu.pc);
 }

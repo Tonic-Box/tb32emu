@@ -35,6 +35,12 @@ pub fn main() !void {
     w.bind("emuTick", &tick_ctx);
     var stop_ctx = WebView.CallbackContext(&onStop).init(w.webview);
     w.bind("emuStop", &stop_ctx);
+    var dbgstep_ctx = WebView.CallbackContext(&onDbgStep).init(w.webview);
+    w.bind("dbgStep", &dbgstep_ctx);
+    var dbgbreak_ctx = WebView.CallbackContext(&onDbgBreak).init(w.webview);
+    w.bind("dbgBreak", &dbgbreak_ctx);
+    var dbgsnap_ctx = WebView.CallbackContext(&onDbgSnapshot).init(w.webview);
+    w.bind("dbgSnapshot", &dbgsnap_ctx);
 
     var url_buf: [64]u8 = undefined;
     const url = try std.fmt.bufPrintZ(&url_buf, "http://127.0.0.1:{d}/", .{port});
@@ -94,16 +100,19 @@ fn onTick(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
         }
     }
 
-    const status = emu.tick(max);
+    replyStatus(view, seq, a, emu.tick(max));
+}
+
+fn replyStatus(view: WebView, seq: [:0]const u8, a: std.mem.Allocator, status: emulator.Status) void {
     const out_b64 = encodeB64(a, emu.takeOutput()) catch "";
     emu.clearOutput();
-
     const tail: []const u8 = switch (status) {
         .running => "running\"",
         .halted => "halted\"",
         .waiting_input => "waiting\"",
         .exited => |c| std.fmt.allocPrint(a, "exited\",\"code\":{d}", .{c}) catch "exited\"",
         .sleep_ms => |ms| std.fmt.allocPrint(a, "sleep\",\"ms\":{d}", .{ms}) catch "sleep\"",
+        .breakpoint => |pc| std.fmt.allocPrint(a, "breakpoint\",\"pc\":{d}", .{pc}) catch "breakpoint\"",
         .fault => |f| std.fmt.allocPrint(a, "fault\",\"code\":{d},\"pc\":{d}", .{ f.code, f.pc }) catch "fault\"",
     };
     const json = std.fmt.allocPrintZ(a, "{{\"out\":\"{s}\",\"raw\":{},\"state\":\"{s}}}", .{ out_b64, emu.isRaw(), tail }) catch {
@@ -111,6 +120,85 @@ fn onTick(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
         return;
     };
     view.ret(seq, 0, json);
+}
+
+fn onDbgStep(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
+    _ = req;
+    const view = WebView{ .webview = data };
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    replyStatus(view, seq, arena.allocator(), emu.stepOne());
+}
+
+fn onDbgBreak(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
+    const view = WebView{ .webview = data };
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    if (jsonArray(arena.allocator(), req)) |args| {
+        if (args.len >= 2) {
+            const on = switch (args[1]) {
+                .bool => |b| b,
+                else => true,
+            };
+            if (jsonU32(args[0])) |addr| emu.setBreak(addr, on);
+        }
+    }
+    view.ret(seq, 0, "{\"ok\":true}");
+}
+
+fn onDbgSnapshot(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
+    _ = req;
+    const view = WebView{ .webview = data };
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const json = buildSnapshot(arena.allocator()) catch {
+        view.ret(seq, 0, "{}");
+        return;
+    };
+    view.ret(seq, 0, json);
+}
+
+fn rd32(ram: []const u8, addr: u32) u32 {
+    return @as(u32, ram[addr]) | (@as(u32, ram[addr + 1]) << 8) | (@as(u32, ram[addr + 2]) << 16) | (@as(u32, ram[addr + 3]) << 24);
+}
+
+fn buildSnapshot(a: std.mem.Allocator) ![:0]const u8 {
+    const tb = @import("tb32");
+    var buf = std.ArrayList(u8).init(a);
+    const w = buf.writer();
+    try w.print("{{\"pc\":{d},\"brk\":{d},\"flags\":{{\"z\":{},\"n\":{},\"c\":{},\"v\":{}}},\"regs\":[", .{
+        emu.cpu.pc, emu.brk, emu.cpu.f.z, emu.cpu.f.n, emu.cpu.f.c, emu.cpu.f.v,
+    });
+    for (emu.cpu.r, 0..) |v, i| {
+        if (i > 0) try w.writeAll(",");
+        try w.print("{d}", .{v});
+    }
+    try w.writeAll("],\"disasm\":[");
+    var dbuf: [64]u8 = undefined;
+    var first = true;
+    var k: u32 = 0;
+    while (k < 24) : (k += 1) {
+        const addr = emu.cpu.pc +% k *% 4;
+        if (@as(u64, addr) + 4 > emu.ram.len) break;
+        const text = tb.disasm(rd32(emu.ram, addr), addr, &dbuf);
+        if (!first) try w.writeAll(",");
+        first = false;
+        try w.print("{{\"a\":{d},\"t\":\"{s}\",\"bp\":{}}}", .{ addr, text, emu.hasBreak(addr) });
+    }
+    try w.writeAll("],\"stack\":[");
+    const sp = emu.cpu.r[13];
+    first = true;
+    k = 0;
+    while (k < 8) : (k += 1) {
+        const addr = sp +% k *% 4;
+        if (@as(u64, addr) + 4 > emu.ram.len) break;
+        if (!first) try w.writeAll(",");
+        first = false;
+        try w.print("{{\"a\":{d},\"v\":{d}}}", .{ addr, rd32(emu.ram, addr) });
+    }
+    try w.writeAll("]}");
+    try buf.append(0);
+    return buf.items[0 .. buf.items.len - 1 :0];
 }
 
 fn onStop(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {

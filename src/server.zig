@@ -13,6 +13,7 @@ const assets = [_]Asset{
     .{ .path = "/app.js", .body = @embedFile("web/app.js"), .ctype = js },
     .{ .path = "/editor.js", .body = @embedFile("web/editor.js"), .ctype = js },
     .{ .path = "/terminal.js", .body = @embedFile("web/terminal.js"), .ctype = js },
+    .{ .path = "/debugger.js", .body = @embedFile("web/debugger.js"), .ctype = js },
     .{ .path = "/vendor/vt.js", .body = @embedFile("web/vendor/vt.js"), .ctype = js },
     .{ .path = "/vendor/vt.css", .body = @embedFile("web/vendor/vt.css"), .ctype = css },
     .{ .path = "/vendor/codemirror/codemirror.min.css", .body = @embedFile("web/vendor/codemirror/codemirror.min.css"), .ctype = css },
