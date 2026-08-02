@@ -2,11 +2,19 @@ const std = @import("std");
 
 const Asset = struct { path: []const u8, body: []const u8, ctype: []const u8 };
 
+const html = "text/html; charset=utf-8";
+const css = "text/css; charset=utf-8";
+const js = "text/javascript; charset=utf-8";
+
 const assets = [_]Asset{
-    .{ .path = "/", .body = @embedFile("web/index.html"), .ctype = "text/html; charset=utf-8" },
-    .{ .path = "/index.html", .body = @embedFile("web/index.html"), .ctype = "text/html; charset=utf-8" },
-    .{ .path = "/style.css", .body = @embedFile("web/style.css"), .ctype = "text/css; charset=utf-8" },
-    .{ .path = "/app.js", .body = @embedFile("web/app.js"), .ctype = "text/javascript; charset=utf-8" },
+    .{ .path = "/", .body = @embedFile("web/index.html"), .ctype = html },
+    .{ .path = "/index.html", .body = @embedFile("web/index.html"), .ctype = html },
+    .{ .path = "/style.css", .body = @embedFile("web/style.css"), .ctype = css },
+    .{ .path = "/app.js", .body = @embedFile("web/app.js"), .ctype = js },
+    .{ .path = "/editor.js", .body = @embedFile("web/editor.js"), .ctype = js },
+    .{ .path = "/vendor/codemirror/codemirror.min.css", .body = @embedFile("web/vendor/codemirror/codemirror.min.css"), .ctype = css },
+    .{ .path = "/vendor/codemirror/codemirror.min.js", .body = @embedFile("web/vendor/codemirror/codemirror.min.js"), .ctype = js },
+    .{ .path = "/vendor/codemirror/simple.min.js", .body = @embedFile("web/vendor/codemirror/simple.min.js"), .ctype = js },
 };
 
 fn lookup(target: []const u8) ?Asset {

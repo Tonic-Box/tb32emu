@@ -3,15 +3,39 @@
 <head>
 <meta charset="utf-8">
 <title>tb32emu</title>
+<link rel="stylesheet" href="/vendor/codemirror/codemirror.min.css">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<main>
-<h1>tb32emu</h1>
-<p class="sub">TB32 emulator and assembly IDE</p>
-<button id="ping">ping zig</button>
-<pre id="out"></pre>
-</main>
+<div id="app">
+  <header id="toolbar">
+    <span class="brand">tb32emu</span>
+    <span class="dim">TB32 emulator</span>
+  </header>
+  <div id="tabbar"></div>
+  <div id="workspace">
+    <div id="editor-pane"><div id="editor"></div></div>
+    <aside id="debug-pane">
+      <h2>Registers</h2>
+      <p class="hint">Run or step a program to inspect CPU state.</p>
+    </aside>
+  </div>
+  <div id="bottom">
+    <div id="bottom-tabs">
+      <button class="btab active" data-panel="console">Console</button>
+      <button class="btab" data-panel="terminal">Terminal</button>
+    </div>
+    <div id="bottom-body">
+      <pre id="console" class="panel active"></pre>
+      <div id="terminal" class="panel">
+        <p class="hint">The terminal appears here when a program runs.</p>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/vendor/codemirror/codemirror.min.js"></script>
+<script src="/vendor/codemirror/simple.min.js"></script>
+<script src="/editor.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
