@@ -1,27 +1,33 @@
 const std = @import("std");
-const tb32 = @import("tb32");
+const WebView = @import("webview").WebView;
+const server = @import("server.zig");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const a = gpa.allocator();
+    const address = try std.net.Address.parseIp("127.0.0.1", 0);
+    var net_server = try address.listen(.{ .reuse_address = true });
+    const port = net_server.listen_address.getPort();
 
-    const src = ".text\n_start:\nli r1, 5\nli r2, 37\nadd r3, r1, r2\nhlt\n";
-    const tbx = try tb32.assemble(a, src);
-    defer a.free(tbx);
+    const thread = try std.Thread.spawn(.{}, server.serve, .{&net_server});
+    thread.detach();
 
-    var buf: [64]u8 = undefined;
-    const word = tb32.isa.encR(tb32.isa.ADD, 3, 1, 2);
+    std.debug.print("tb32emu: serving http://127.0.0.1:{d}/\n", .{port});
 
-    const out = std.io.getStdOut().writer();
-    try out.print("tb32emu linked against libtb32 v0.1.0\n", .{});
-    try out.print("assembled {d} bytes of TBX\n", .{tbx.len});
-    try out.print("disasm sample: {s}\n", .{tb32.disasm(word, tb32.isa.TEXT_BASE, &buf)});
+    const w = WebView.create(false, null);
+    defer w.destroy();
+    w.setTitle("tb32emu");
+    w.setSize(1100, 720, .None);
+
+    var ctx = WebView.CallbackContext(&ping).init(w.webview);
+    w.bind("ping", &ctx);
+
+    var url_buf: [64]u8 = undefined;
+    const url = try std.fmt.bufPrintZ(&url_buf, "http://127.0.0.1:{d}/", .{port});
+    w.navigate(url);
+    w.run();
 }
 
-test "libtb32 dependency links and assembles" {
-    const a = std.testing.allocator;
-    const tbx = try tb32.assemble(a, ".text\nhlt\n");
-    defer a.free(tbx);
-    try std.testing.expectEqualSlices(u8, "TBX\x7f", tbx[0..4]);
+fn ping(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
+    _ = req;
+    const view = WebView{ .webview = data };
+    view.ret(seq, 0, "\"pong from zig\"");
 }

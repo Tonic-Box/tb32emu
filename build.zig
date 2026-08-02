@@ -8,7 +8,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const tb32_mod = libtb32.module("tb32");
+    const webview = b.dependency("webview", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     const exe = b.addExecutable(.{
         .name = "tb32emu",
@@ -16,7 +19,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addImport("tb32", tb32_mod);
+    exe.root_module.addImport("tb32", libtb32.module("tb32"));
+    exe.root_module.addImport("webview", webview.module("webview"));
+    exe.linkLibrary(webview.artifact("webviewStatic"));
+    exe.linkLibCpp();
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -30,7 +36,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    tests.root_module.addImport("tb32", tb32_mod);
+    tests.root_module.addImport("tb32", libtb32.module("tb32"));
+    tests.root_module.addImport("webview", webview.module("webview"));
     const test_step = b.step("test", "Run tb32emu tests");
     test_step.dependOn(&b.addRunArtifact(tests).step);
 }

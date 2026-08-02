@@ -7,6 +7,10 @@
             .url = "git+https://github.com/Tonic-Box/libtb32?ref=v0.1.0#3fff3a1124c95d3a4c899f50b118e32ec35b48aa",
             .hash = "122092364321d1f46b872d92e299bdc892303abc62f661db6a2d7d59d0c9b3ed10b6",
         },
+        .webview = .{
+            .url = "git+https://github.com/thechampagne/webview-zig?ref=webview-0.10.0#4552da76a276bf03515f0e471b3647e169da57b7",
+            .hash = "1220003c3a8635b2972137186856dd8b5f899e5b612e0da37db064ce58e60c845d6d",
+        },
     },
     .paths = .{
         "build.zig",
