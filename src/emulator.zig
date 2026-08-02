@@ -11,6 +11,10 @@ const SYS_exit = 11;
 const SYS_set_raw = 26;
 const SYS_time = 27;
 const SYS_getrandom = 28;
+const SYS_getenv = 41;
+const SYS_setenv = 42;
+const SYS_unsetenv = 43;
+const SYS_getenviron = 44;
 const SYS_msleep = 73;
 const SYS_sleep = 76;
 const SYS_read_nb = 78;
@@ -20,11 +24,27 @@ const SYS_gettimeofday = 81;
 const SYS_nanosleep = 82;
 const SYS_brk = 83;
 const SYS_sbrk = 84;
+const SYS_mmap = 100;
+const SYS_munmap = 101;
+const SYS_mprotect = 102;
 
 const TIOCGWINSZ = 0x5413;
+const MAP_ANON = 0x20;
+const MMAP_BASE: u32 = 8 * 1024 * 1024;
+const MMAP_END: u32 = 12 * 1024 * 1024;
 const ENOSYS: u32 = @bitCast(@as(i32, -38));
 const EBADF: u32 = @bitCast(@as(i32, -9));
+const EINVAL: u32 = @bitCast(@as(i32, -22));
+const ENOMEM: u32 = @bitCast(@as(i32, -12));
 const NEG1: u32 = @bitCast(@as(i32, -1));
+
+/// Initial process state: argv, environment, and RNG seed.
+pub const RunConfig = struct {
+    args: []const []const u8 = &.{},
+    env_keys: []const []const u8 = &.{},
+    env_vals: []const []const u8 = &.{},
+    seed: ?u64 = null,
+};
 
 const TERM_COLS: u16 = 80;
 const TERM_ROWS: u16 = 24;
@@ -42,6 +62,10 @@ pub const Status = union(enum) {
 
 const SysAction = union(enum) { cont, exit: i32, waiting, sleep: u32 };
 
+fn remaining(total: u32, used: u32) u32 {
+    return if (total > used) total - used else 0;
+}
+
 /// A single TB32 program running against an in-memory bus and a clean-room host for the
 /// public syscall ABI. Driven in bounded bursts by `tick`.
 pub const Emulator = struct {
@@ -58,9 +82,15 @@ pub const Emulator = struct {
     start_ms: i64,
     breakpoints: std.AutoHashMap(u32, void),
     just_hit_bp: bool,
+    env_arena: std.heap.ArenaAllocator,
+    env: std.StringHashMap([]const u8),
+    prng: std.Random.DefaultPrng,
+    use_seed: bool,
+    mmap_next: u32,
 
     pub fn init(gpa: std.mem.Allocator) !Emulator {
         const ram = try gpa.alloc(u8, MEM_SIZE);
+        var env_arena = std.heap.ArenaAllocator.init(gpa);
         return .{
             .gpa = gpa,
             .ram = ram,
@@ -75,12 +105,17 @@ pub const Emulator = struct {
             .start_ms = 0,
             .breakpoints = std.AutoHashMap(u32, void).init(gpa),
             .just_hit_bp = false,
+            .env_arena = env_arena,
+            .env = std.StringHashMap([]const u8).init(env_arena.allocator()),
+            .prng = std.Random.DefaultPrng.init(0),
+            .use_seed = false,
+            .mmap_next = MMAP_BASE,
         };
     }
 
     /// Assembles `src`, loads it, and resets the machine ready to run. On assembly
     /// failure `diag` is filled and the error is returned.
-    pub fn start(self: *Emulator, src: []const u8, diag: *tb32.Diagnostic) tb32.assembler.Error!void {
+    pub fn start(self: *Emulator, src: []const u8, cfg: RunConfig, diag: *tb32.Diagnostic) tb32.assembler.Error!void {
         const tbx = try tb32.assembleDiag(self.gpa, src, diag);
         defer self.gpa.free(tbx);
         @memset(self.ram, 0);
@@ -95,10 +130,59 @@ pub const Emulator = struct {
         self.raw = false;
         self.started = true;
         self.just_hit_bp = false;
+        self.mmap_next = MMAP_BASE;
         self.stdin.clearRetainingCapacity();
         self.stdin_pos = 0;
         self.out.clearRetainingCapacity();
         self.start_ms = std.time.milliTimestamp();
+
+        if (cfg.seed) |s| {
+            self.prng = std.Random.DefaultPrng.init(s);
+            self.use_seed = true;
+        } else {
+            self.use_seed = false;
+        }
+        self.setupEnv(cfg);
+        self.setupArgs(cfg.args);
+    }
+
+    fn setupEnv(self: *Emulator, cfg: RunConfig) void {
+        self.env.deinit();
+        _ = self.env_arena.reset(.free_all);
+        self.env = std.StringHashMap([]const u8).init(self.env_arena.allocator());
+        const a = self.env_arena.allocator();
+        var i: usize = 0;
+        while (i < cfg.env_keys.len and i < cfg.env_vals.len) : (i += 1) {
+            const k = a.dupe(u8, cfg.env_keys[i]) catch continue;
+            const v = a.dupe(u8, cfg.env_vals[i]) catch continue;
+            self.env.put(k, v) catch {};
+        }
+    }
+
+    fn setupArgs(self: *Emulator, args: []const []const u8) void {
+        if (args.len == 0) {
+            self.cpu.r[1] = 0;
+            self.cpu.r[2] = 0;
+            return;
+        }
+        var total: u32 = 0;
+        for (args) |arg| total += @as(u32, @intCast(arg.len)) + 1;
+        const ptr_bytes: u32 = @as(u32, @intCast(args.len)) * 4;
+        var region: u32 = (total + ptr_bytes + 15) & ~@as(u32, 15);
+        if (region > MEM_SIZE / 4) region = MEM_SIZE / 4;
+        const base = MEM_SIZE - region;
+        var str = base + ptr_bytes;
+        for (args, 0..) |arg, i| {
+            const n: u32 = @intCast(arg.len);
+            if (str + n + 1 > MEM_SIZE) break;
+            @memcpy(self.ram[str .. str + n], arg);
+            self.ram[str + n] = 0;
+            self.putU32(base + @as(u32, @intCast(i)) * 4, str);
+            str += n + 1;
+        }
+        self.cpu.r[1] = @intCast(args.len);
+        self.cpu.r[2] = base;
+        self.cpu.r[13] = base;
     }
 
     pub fn deinit(self: *Emulator) void {
@@ -106,6 +190,8 @@ pub const Emulator = struct {
         self.stdin.deinit();
         self.out.deinit();
         self.breakpoints.deinit();
+        self.env.deinit();
+        self.env_arena.deinit();
     }
 
     pub fn hasBreak(self: *Emulator, addr: u32) bool {
@@ -285,11 +371,83 @@ pub const Emulator = struct {
             },
             SYS_getrandom => {
                 if (self.inBounds(a1, a2)) {
-                    std.crypto.random.bytes(self.ram[a1 .. a1 + a2]);
+                    if (self.use_seed) {
+                        self.prng.random().bytes(self.ram[a1 .. a1 + a2]);
+                    } else {
+                        std.crypto.random.bytes(self.ram[a1 .. a1 + a2]);
+                    }
                     self.setR1(a2);
                 } else {
                     self.setR1(NEG1);
                 }
+                return .cont;
+            },
+            SYS_getenv => {
+                if (self.env.get(self.guestStr(a1))) |val| {
+                    self.setR1(self.copyOut(a2, val, a3));
+                } else {
+                    self.setR1(NEG1);
+                }
+                return .cont;
+            },
+            SYS_setenv => {
+                const ea = self.env_arena.allocator();
+                const k = ea.dupe(u8, self.guestStr(a1)) catch {
+                    self.setR1(NEG1);
+                    return .cont;
+                };
+                const v = ea.dupe(u8, self.guestStr(a2)) catch {
+                    self.setR1(NEG1);
+                    return .cont;
+                };
+                self.env.put(k, v) catch {
+                    self.setR1(NEG1);
+                    return .cont;
+                };
+                self.setR1(0);
+                return .cont;
+            },
+            SYS_unsetenv => {
+                _ = self.env.remove(self.guestStr(a1));
+                self.setR1(0);
+                return .cont;
+            },
+            SYS_getenviron => {
+                var n: u32 = 0;
+                var it = self.env.iterator();
+                while (it.next()) |e| {
+                    n += self.copyOut(a1 + n, e.key_ptr.*, remaining(a2, n));
+                    n += self.copyOut(a1 + n, "=", remaining(a2, n));
+                    n += self.copyOut(a1 + n, e.value_ptr.*, remaining(a2, n));
+                    if (n < a2) {
+                        self.putByte(a1 + n, 0);
+                        n += 1;
+                    }
+                }
+                self.setR1(n);
+                return .cont;
+            },
+            SYS_mmap => {
+                const len = a2;
+                if (r[4] & MAP_ANON == 0) {
+                    self.setR1(EBADF);
+                    return .cont;
+                }
+                const rounded = (len + 15) & ~@as(u32, 15);
+                if (self.mmap_next + rounded <= MMAP_END) {
+                    self.setR1(self.mmap_next);
+                    self.mmap_next += rounded;
+                } else {
+                    self.setR1(ENOMEM);
+                }
+                return .cont;
+            },
+            SYS_munmap => {
+                self.setR1(0);
+                return .cont;
+            },
+            SYS_mprotect => {
+                self.setR1(0);
                 return .cont;
             },
             SYS_brk => {
@@ -319,6 +477,24 @@ pub const Emulator = struct {
                 return .cont;
             },
         }
+    }
+
+    fn putByte(self: *Emulator, addr: u32, v: u8) void {
+        if (addr < self.ram.len) self.ram[addr] = v;
+    }
+
+    fn guestStr(self: *Emulator, addr: u32) []const u8 {
+        if (addr >= self.ram.len) return "";
+        var end: u32 = addr;
+        while (end < self.ram.len and self.ram[end] != 0) end += 1;
+        return self.ram[addr..end];
+    }
+
+    fn copyOut(self: *Emulator, addr: u32, bytes: []const u8, limit: u32) u32 {
+        var n: u32 = @intCast(@min(bytes.len, limit));
+        if (!self.inBounds(addr, n)) n = 0;
+        if (n > 0) @memcpy(self.ram[addr .. addr + n], bytes[0..n]);
+        return n;
     }
 
     fn getU32(self: *Emulator, addr: u32) u32 {
@@ -362,7 +538,7 @@ test "runs a write and exit program" {
         \\.rodata
         \\msg: .asciz "hi\n"
     ;
-    try emu.start(src, &diag);
+    try emu.start(src, .{}, &diag);
     const st = emu.tick(100000);
     try std.testing.expect(st == .exited);
     try std.testing.expectEqualStrings("hi\n", emu.takeOutput());
@@ -383,7 +559,7 @@ test "getrandom is reproducible under no seed only across calls" {
         \\    sys
         \\    hlt
     ;
-    try emu.start(src, &diag);
+    try emu.start(src, .{}, &diag);
     const st = emu.tick(100000);
     try std.testing.expect(st == .halted);
 }
@@ -401,7 +577,7 @@ test "breakpoint halts at the right pc and continue resumes" {
         \\    nop
         \\    hlt
     ;
-    try emu.start(src, &diag);
+    try emu.start(src, .{}, &diag);
     emu.setBreak(0x1008, true);
     const st = emu.tick(100);
     try std.testing.expect(st == .breakpoint);
@@ -421,8 +597,46 @@ test "stepOne advances exactly one instruction" {
         \\    nop
         \\    hlt
     ;
-    try emu.start(src, &diag);
+    try emu.start(src, .{}, &diag);
     const pc0 = emu.cpu.pc;
     _ = emu.stepOne();
     try std.testing.expectEqual(pc0 + 4, emu.cpu.pc);
+}
+
+test "seeded getrandom is reproducible" {
+    const a = std.testing.allocator;
+    var emu = try Emulator.init(a);
+    defer emu.deinit();
+    var diag: tb32.Diagnostic = .{};
+    const src =
+        \\.text
+        \\.entry _start
+        \\_start:
+        \\    li r7, 28
+        \\    li r1, 0x2000
+        \\    li r2, 8
+        \\    sys
+        \\    hlt
+    ;
+    try emu.start(src, .{ .seed = 42 }, &diag);
+    _ = emu.tick(100000);
+    var first: [8]u8 = undefined;
+    @memcpy(&first, emu.ram[0x2000..0x2008]);
+    try emu.start(src, .{ .seed = 42 }, &diag);
+    _ = emu.tick(100000);
+    try std.testing.expectEqualSlices(u8, &first, emu.ram[0x2000..0x2008]);
+}
+
+test "run config populates env and argv" {
+    const a = std.testing.allocator;
+    var emu = try Emulator.init(a);
+    defer emu.deinit();
+    var diag: tb32.Diagnostic = .{};
+    const src = "\n.text\n_start:\nhlt\n";
+    const args = [_][]const u8{ "prog", "one" };
+    const keys = [_][]const u8{"HOME"};
+    const vals = [_][]const u8{"/root"};
+    try emu.start(src, .{ .args = &args, .env_keys = &keys, .env_vals = &vals }, &diag);
+    try std.testing.expectEqualStrings("/root", emu.env.get("HOME").?);
+    try std.testing.expectEqual(@as(u32, 2), emu.cpu.r[1]);
 }

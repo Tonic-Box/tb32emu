@@ -62,6 +62,54 @@
   }
   window.runAssemble = runAssemble;
 
+  var cfg = { rawArgs: "", rawEnv: "", rawSeed: "", args: [], env: [], seed: null };
+
+  function parseConfig() {
+    cfg.args = cfg.rawArgs.trim() ? cfg.rawArgs.trim().split(/\s+/) : [];
+    cfg.env = cfg.rawEnv.split("\n").map(function (l) { return l.trim(); }).filter(Boolean).map(function (l) {
+      var i = l.indexOf("=");
+      return i < 0 ? [l, ""] : [l.slice(0, i), l.slice(i + 1)];
+    });
+    var s = cfg.rawSeed.trim();
+    cfg.seed = s === "" ? null : (Number.isFinite(Number(s)) ? Math.floor(Number(s)) : null);
+  }
+
+  function openConfig() {
+    document.getElementById("cfg-args").value = cfg.rawArgs;
+    document.getElementById("cfg-env").value = cfg.rawEnv;
+    document.getElementById("cfg-seed").value = cfg.rawSeed;
+    document.getElementById("config-modal").classList.remove("hidden");
+  }
+
+  function saveConfig() {
+    cfg.rawArgs = document.getElementById("cfg-args").value;
+    cfg.rawEnv = document.getElementById("cfg-env").value;
+    cfg.rawSeed = document.getElementById("cfg-seed").value;
+    parseConfig();
+    document.getElementById("config-modal").classList.add("hidden");
+    logConsole("run config saved" + (cfg.seed !== null ? " (seed " + cfg.seed + ")" : ""), "log-muted");
+  }
+
+  function closeConfig() {
+    document.getElementById("config-modal").classList.add("hidden");
+  }
+
+  function buildRunReq() {
+    return {
+      src: window.editor.activeContent(),
+      args: [window.editor.activeName()].concat(cfg.args),
+      env: cfg.env,
+      seed: cfg.seed,
+    };
+  }
+
+  function logRunStart() {
+    var extra = [];
+    if (cfg.seed !== null) extra.push("seed=" + cfg.seed);
+    if (cfg.args.length) extra.push("args: " + cfg.args.join(" "));
+    logConsole("running " + window.editor.activeName() + (extra.length ? " (" + extra.join(", ") + ")" : ""), "log-muted");
+  }
+
   function outToTerm(b64) {
     if (!b64) return;
     var bin = atob(b64), arr = new Uint8Array(bin.length);
@@ -115,13 +163,13 @@
   async function runProgram() {
     if (emuState === "running") return;
     window.editor.clearError();
-    var res = await window.run(window.editor.activeContent());
+    var res = await window.run(buildRunReq());
     if (!res || !res.ok) { showError(res); return; }
     window.term.reset();
     showPanel("terminal");
     setState("running");
     setStatus("running", "running");
-    logConsole("running " + window.editor.activeName(), "log-muted");
+    logRunStart();
     setTimeout(tickOnce, 0);
   }
 
@@ -143,7 +191,7 @@
     if (emuState === "running") return;
     if (emuState !== "paused") {
       window.editor.clearError();
-      var r = await window.run(window.editor.activeContent());
+      var r = await window.run(buildRunReq());
       if (!r || !r.ok) { showError(r); return; }
       window.term.reset();
       showPanel("terminal");
@@ -179,6 +227,12 @@
   document.getElementById("assemble").addEventListener("click", runAssemble);
   document.getElementById("run").addEventListener("click", runProgram);
   document.getElementById("stop").addEventListener("click", stopProgram);
+  document.getElementById("config").addEventListener("click", openConfig);
+  document.getElementById("cfg-save").addEventListener("click", saveConfig);
+  document.getElementById("cfg-cancel").addEventListener("click", closeConfig);
+  document.getElementById("clear-console").addEventListener("click", function () {
+    document.getElementById("console").innerHTML = "";
+  });
   window.emuControls = { step: stepProgram, cont: continueRun, pause: pauseRun, run: runProgram, stop: stopProgram };
   setState("idle");
   logConsole("tb32emu ready.", "log-muted");

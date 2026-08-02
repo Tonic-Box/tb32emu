@@ -282,6 +282,82 @@ body {
   gap: 10px;
 }
 
+.clearbtn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 12px;
+}
+
+.clearbtn:hover {
+  color: var(--blue);
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-box {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px 20px;
+  width: 420px;
+  max-width: 90vw;
+}
+
+.modal-box h2 {
+  color: var(--heading);
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+.modal-box label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin: 10px 0 4px;
+}
+
+.modal-box input,
+.modal-box textarea {
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: var(--mono);
+  font-size: 13px;
+  resize: vertical;
+}
+
+.modal-box input:focus,
+.modal-box textarea:focus {
+  outline: none;
+  border-color: var(--blue);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
 .hint {
   color: var(--muted);
   font-size: 12px;

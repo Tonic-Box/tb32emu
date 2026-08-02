@@ -68,18 +68,84 @@ fn onRun(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
     defer arena.deinit();
     const a = arena.allocator();
 
-    const src = firstStringArg(a, req) orelse {
+    const args = jsonArray(a, req) orelse {
         view.ret(seq, 1, "\"bad request\"");
         return;
     };
+    const obj = if (args.len >= 1) switch (args[0]) {
+        .object => |o| o,
+        else => null,
+    } else null;
+    if (obj == null) {
+        view.ret(seq, 1, "\"bad request\"");
+        return;
+    }
+    const src = strField(obj.?, "src") orelse {
+        view.ret(seq, 1, "\"bad request\"");
+        return;
+    };
+
+    var arglist = std.ArrayList([]const u8).init(a);
+    if (obj.?.get("args")) |av| switch (av) {
+        .array => |arr| for (arr.items) |it| switch (it) {
+            .string => |s| arglist.append(s) catch {},
+            else => {},
+        },
+        else => {},
+    };
+    var keys = std.ArrayList([]const u8).init(a);
+    var vals = std.ArrayList([]const u8).init(a);
+    if (obj.?.get("env")) |ev| switch (ev) {
+        .array => |arr| for (arr.items) |pair| switch (pair) {
+            .array => |p| if (p.items.len >= 2) {
+                const k = switch (p.items[0]) {
+                    .string => |s| s,
+                    else => continue,
+                };
+                const v = switch (p.items[1]) {
+                    .string => |s| s,
+                    else => continue,
+                };
+                keys.append(k) catch {};
+                vals.append(v) catch {};
+            },
+            else => {},
+        },
+        else => {},
+    };
+    var seed: ?u64 = null;
+    if (obj.?.get("seed")) |sv| switch (sv) {
+        .integer => |n| if (n >= 0) {
+            seed = @intCast(n);
+        },
+        .float => |f| if (f >= 0) {
+            seed = @intFromFloat(f);
+        },
+        else => {},
+    };
+
+    const cfg = emulator.RunConfig{
+        .args = arglist.items,
+        .env_keys = keys.items,
+        .env_vals = vals.items,
+        .seed = seed,
+    };
     var diag: @import("tb32").Diagnostic = .{};
-    emu.start(src, &diag) catch {
+    emu.start(src, cfg, &diag) catch {
         var buf: [256]u8 = undefined;
         const j = std.fmt.bufPrintZ(&buf, "{{\"ok\":false,\"line\":{d},\"message\":\"{s}\"}}", .{ diag.line, diag.message }) catch "{\"ok\":false,\"line\":0,\"message\":\"error\"}";
         view.ret(seq, 0, j);
         return;
     };
     view.ret(seq, 0, "{\"ok\":true}");
+}
+
+fn strField(obj: std.json.ObjectMap, name: []const u8) ?[]const u8 {
+    const v = obj.get(name) orelse return null;
+    return switch (v) {
+        .string => |s| s,
+        else => null,
+    };
 }
 
 fn onTick(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
