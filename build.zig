@@ -25,6 +25,7 @@ pub fn build(b: *std.Build) void {
     exe.linkLibCpp();
     if (target.result.os.tag == .windows) {
         exe.addWin32ResourceFile(.{ .file = b.path("app.rc") });
+        if (optimize != .Debug) exe.subsystem = .Windows;
     }
     b.installArtifact(exe);
 
