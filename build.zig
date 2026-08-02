@@ -23,6 +23,9 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("webview", webview.module("webview"));
     exe.linkLibrary(webview.artifact("webviewStatic"));
     exe.linkLibCpp();
+    if (target.result.os.tag == .windows) {
+        exe.addWin32ResourceFile(.{ .file = b.path("app.rc") });
+    }
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);

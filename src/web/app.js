@@ -9,24 +9,38 @@
   }
   window.logConsole = logConsole;
 
-  function initBottomTabs() {
-    var tabs = document.querySelectorAll(".btab");
-    tabs.forEach(function (b) {
-      b.addEventListener("click", function () {
-        tabs.forEach(function (x) { x.classList.remove("active"); });
-        b.classList.add("active");
-        document.querySelectorAll("#bottom-body .panel").forEach(function (p) {
-          p.classList.remove("active");
-        });
-        document.getElementById(b.dataset.panel).classList.add("active");
-      });
+  function showPanel(name) {
+    document.querySelectorAll(".btab").forEach(function (b) {
+      b.classList.toggle("active", b.dataset.panel === name);
+    });
+    document.querySelectorAll("#bottom-body .panel").forEach(function (p) {
+      p.classList.toggle("active", p.id === name);
     });
   }
 
+  function initBottomTabs() {
+    document.querySelectorAll(".btab").forEach(function (b) {
+      b.addEventListener("click", function () { showPanel(b.dataset.panel); });
+    });
+  }
+
+  async function runAssemble() {
+    window.editor.clearError();
+    var res = await window.assemble(window.editor.activeContent());
+    if (res && res.ok) {
+      logConsole("assembled " + window.editor.activeName() + " -> " + res.bytes + " bytes", "log-ok");
+    } else if (res) {
+      logConsole(window.editor.activeName() + ":" + res.line + ": " + res.message, "log-error");
+      window.editor.markError(res.line);
+      showPanel("console");
+    } else {
+      logConsole("assemble failed", "log-error");
+    }
+  }
+  window.runAssemble = runAssemble;
+
   window.editor.init();
   initBottomTabs();
+  document.getElementById("assemble").addEventListener("click", runAssemble);
   logConsole("tb32emu ready.", "log-muted");
-  if (window.ping) {
-    window.ping().then(function (r) { logConsole("backend: " + r, "log-ok"); });
-  }
 })();

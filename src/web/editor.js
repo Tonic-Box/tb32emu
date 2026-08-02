@@ -36,6 +36,7 @@
   var tabs = [];
   var active = -1;
   var untitled = 0;
+  var errorLine = null;
 
   function nextName() {
     untitled += 1;
@@ -70,6 +71,7 @@
 
   function select(i) {
     if (i === active) return;
+    clearError();
     active = i;
     cm.swapDoc(tabs[i].doc);
     render();
@@ -95,6 +97,22 @@
     select(target);
   }
 
+  function clearError() {
+    if (cm && errorLine !== null) {
+      cm.removeLineClass(errorLine, "background", "cm-error-line");
+      errorLine = null;
+    }
+  }
+
+  function markError(line) {
+    clearError();
+    var l = line - 1;
+    if (l < 0 || l >= cm.lineCount()) return;
+    cm.addLineClass(l, "background", "cm-error-line");
+    errorLine = l;
+    cm.scrollIntoView({ line: l, ch: 0 }, 80);
+  }
+
   function init() {
     cm = CM(document.getElementById("editor"), {
       mode: "tb32",
@@ -103,7 +121,11 @@
       indentUnit: 4,
       tabSize: 4,
       indentWithTabs: false,
+      extraKeys: {
+        "Ctrl-B": function () { if (window.runAssemble) window.runAssemble(); },
+      },
     });
+    cm.on("change", clearError);
     newTab("scratch.s", SAMPLE);
     setTimeout(function () { cm.refresh(); }, 0);
   }
@@ -111,6 +133,8 @@
   window.editor = {
     init: init,
     newTab: newTab,
+    markError: markError,
+    clearError: clearError,
     activeContent: function () { return active >= 0 ? tabs[active].doc.getValue() : ""; },
     activeName: function () { return active >= 0 ? tabs[active].name : ""; },
   };

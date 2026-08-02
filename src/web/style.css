@@ -45,11 +45,36 @@ body {
   height: 40px;
   flex: none;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
   padding: 0 14px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
+}
+
+.grow {
+  flex: 1;
+}
+
+.tbtn {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.tbtn:hover {
+  color: var(--heading);
+  border-color: var(--blue);
+}
+
+.tbtn:active {
+  background: var(--border);
 }
 
 .brand {
@@ -262,3 +287,7 @@ body {
 .cm-s-tb32 .cm-number { color: var(--orange); }
 .cm-s-tb32 .cm-keyword { color: var(--blue); }
 .cm-s-tb32 .cm-variable { color: #c0caf5; }
+
+.cm-error-line {
+  background: rgba(247, 118, 142, 0.14);
+}
