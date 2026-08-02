@@ -77,6 +77,21 @@ body {
   background: var(--border);
 }
 
+.tbtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.tbtn-run {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 40%, var(--border));
+}
+
+.tbtn-run:hover:not(:disabled) {
+  color: var(--green);
+  border-color: var(--green);
+}
+
 .brand {
   color: var(--heading);
   font-weight: 700;
@@ -181,12 +196,70 @@ body {
 }
 
 #bottom {
-  height: 190px;
+  height: 200px;
   flex: none;
   display: flex;
   flex-direction: column;
   background: var(--panel);
   border-top: 1px solid var(--border);
+}
+
+#bottom.bottom-tall {
+  height: 62vh;
+}
+
+#terminal {
+  background: var(--bg);
+  padding: 0;
+  overflow: hidden;
+}
+
+#terminal.active {
+  display: flex;
+  flex-direction: column;
+}
+
+.term-status {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.term-status .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--muted);
+}
+
+.dot-running { background: var(--green); animation: term-pulse 1s ease-in-out infinite; }
+.dot-ok { background: var(--green); }
+.dot-warn { background: var(--yellow); }
+.dot-err { background: var(--red); }
+.dot-idle { background: var(--muted); }
+
+@keyframes term-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+#term-host {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 8px;
+}
+
+#term-host .vt-screen {
+  font-family: var(--mono);
+  font-size: 13px;
 }
 
 #bottom-tabs {
