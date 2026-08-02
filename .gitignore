@@ -1,0 +1,15 @@
+.zig-cache/
+zig-cache/
+zig-out/
+*.exe
+*.pdb
+*.o
+*.obj
+.idea/
+.vscode/
+.zed/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
