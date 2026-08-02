@@ -85,8 +85,8 @@
     cm.focus();
   }
 
-  function newTab(name, content) {
-    tabs.push({ name: name || nextName(), doc: CM.Doc(content || "", "tb32") });
+  function newTab(name, content, path) {
+    tabs.push({ name: name || nextName(), doc: CM.Doc(content || "", "tb32"), path: path || null });
     active = -1;
     select(tabs.length - 1);
   }
@@ -130,6 +130,7 @@
       indentWithTabs: false,
       extraKeys: {
         "Ctrl-B": function () { if (window.runAssemble) window.runAssemble(); },
+        "Ctrl-S": function () { if (window.fileMenu) window.fileMenu.save(); },
       },
     });
     cm.on("change", clearError);
@@ -140,9 +141,17 @@
   window.editor = {
     init: init,
     newTab: newTab,
+    openTab: function (name, content, path) { newTab(name, content, path); },
     markError: markError,
     clearError: clearError,
     activeContent: function () { return active >= 0 ? tabs[active].doc.getValue() : ""; },
     activeName: function () { return active >= 0 ? tabs[active].name : ""; },
+    activePath: function () { return active >= 0 ? tabs[active].path : null; },
+    setActivePath: function (path, name) {
+      if (active < 0) return;
+      tabs[active].path = path;
+      if (name) tabs[active].name = name;
+      render();
+    },
   };
 })();

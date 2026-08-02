@@ -110,6 +110,46 @@
     logConsole("running " + window.editor.activeName() + (extra.length ? " (" + extra.join(", ") + ")" : ""), "log-muted");
   }
 
+  function b64enc(str) {
+    var b = new TextEncoder().encode(str), s = "";
+    for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+    return btoa(s);
+  }
+
+  function b64dec(b64) {
+    var bin = atob(b64), arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new TextDecoder().decode(arr);
+  }
+
+  function fileNew() { window.editor.newTab(); }
+
+  async function fileOpen() {
+    var res = await window.fileOpen();
+    if (!res || !res.ok) return;
+    var name = b64dec(res.name);
+    window.editor.openTab(name, b64dec(res.content), b64dec(res.path));
+    logConsole("opened " + name, "log-muted");
+  }
+
+  async function fileSave() {
+    var path = window.editor.activePath();
+    if (!path) return fileSaveAs();
+    var res = await window.fileSave(b64enc(path), b64enc(window.editor.activeContent()));
+    if (res && res.ok) logConsole("saved " + window.editor.activeName(), "log-ok");
+    else logConsole("save failed", "log-error");
+  }
+
+  async function fileSaveAs() {
+    var res = await window.fileSaveAs(b64enc(window.editor.activeName()), b64enc(window.editor.activeContent()));
+    if (!res || !res.ok) return;
+    var name = b64dec(res.name);
+    window.editor.setActivePath(b64dec(res.path), name);
+    logConsole("saved " + name, "log-ok");
+  }
+
+  window.fileMenu = { new: fileNew, open: fileOpen, save: fileSave, saveas: fileSaveAs };
+
   function outToTerm(b64) {
     if (!b64) return;
     var bin = atob(b64), arr = new Uint8Array(bin.length);
@@ -232,6 +272,13 @@
   document.getElementById("cfg-cancel").addEventListener("click", closeConfig);
   document.getElementById("clear-console").addEventListener("click", function () {
     document.getElementById("console").innerHTML = "";
+  });
+  document.querySelectorAll(".menu-drop button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var fn = window.fileMenu[b.dataset.act];
+      if (fn) fn();
+      b.blur();
+    });
   });
   window.emuControls = { step: stepProgram, cont: continueRun, pause: pauseRun, run: runProgram, stop: stopProgram };
   setState("idle");

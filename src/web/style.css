@@ -41,6 +41,70 @@ body {
   height: 100vh;
 }
 
+#menubar {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  height: 28px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.menu {
+  position: relative;
+}
+
+.menu-title {
+  background: none;
+  border: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 0 12px;
+  height: 100%;
+  cursor: pointer;
+}
+
+.menu:hover .menu-title {
+  background: var(--panel);
+}
+
+.menu-drop {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 100%;
+  min-width: 160px;
+  padding: 4px 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 0 0 6px 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  z-index: 50;
+}
+
+.menu:hover .menu-drop {
+  display: block;
+}
+
+.menu-drop button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.menu-drop button:hover {
+  background: var(--blue);
+  color: var(--bg);
+}
+
 #toolbar {
   height: 40px;
   flex: none;

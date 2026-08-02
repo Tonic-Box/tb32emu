@@ -4,6 +4,7 @@ const WebView = @import("webview").WebView;
 const server = @import("server.zig");
 const assemble = @import("assemble.zig");
 const emulator = @import("emulator.zig");
+const dialogs = @import("dialogs.zig");
 
 var gpa_state = std.heap.GeneralPurposeAllocator(.{}){};
 var emu: emulator.Emulator = undefined;
@@ -41,6 +42,12 @@ pub fn main() !void {
     w.bind("dbgBreak", &dbgbreak_ctx);
     var dbgsnap_ctx = WebView.CallbackContext(&onDbgSnapshot).init(w.webview);
     w.bind("dbgSnapshot", &dbgsnap_ctx);
+    var fopen_ctx = WebView.CallbackContext(&onFileOpen).init(w.webview);
+    w.bind("fileOpen", &fopen_ctx);
+    var fsave_ctx = WebView.CallbackContext(&onFileSave).init(w.webview);
+    w.bind("fileSave", &fsave_ctx);
+    var fsaveas_ctx = WebView.CallbackContext(&onFileSaveAs).init(w.webview);
+    w.bind("fileSaveAs", &fsaveas_ctx);
 
     var url_buf: [64]u8 = undefined;
     const url = try std.fmt.bufPrintZ(&url_buf, "http://127.0.0.1:{d}/", .{port});
@@ -272,6 +279,66 @@ fn onStop(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
     emu.started = false;
     const view = WebView{ .webview = data };
     view.ret(seq, 0, "{\"ok\":true}");
+}
+
+fn onFileOpen(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
+    _ = req;
+    const view = WebView{ .webview = data };
+    if (builtin.os.tag == .windows) {
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const path = (dialogs.openDialog(a) catch null) orelse return view.ret(seq, 0, "{\"ok\":false}");
+        const content = std.fs.cwd().readFileAlloc(a, path, 16 * 1024 * 1024) catch return view.ret(seq, 0, "{\"ok\":false}");
+        const pb = encodeB64(a, path) catch "";
+        const nb = encodeB64(a, std.fs.path.basename(path)) catch "";
+        const cb = encodeB64(a, content) catch "";
+        const json = std.fmt.allocPrintZ(a, "{{\"ok\":true,\"path\":\"{s}\",\"name\":\"{s}\",\"content\":\"{s}\"}}", .{ pb, nb, cb }) catch return view.ret(seq, 0, "{\"ok\":false}");
+        view.ret(seq, 0, json);
+    } else {
+        view.ret(seq, 0, "{\"ok\":false}");
+    }
+}
+
+fn onFileSave(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
+    const view = WebView{ .webview = data };
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const args = jsonArray(a, req) orelse return view.ret(seq, 0, "{\"ok\":false}");
+    if (args.len < 2) return view.ret(seq, 0, "{\"ok\":false}");
+    const path = decodeArg(a, args[0]) orelse return view.ret(seq, 0, "{\"ok\":false}");
+    const content = decodeArg(a, args[1]) orelse return view.ret(seq, 0, "{\"ok\":false}");
+    std.fs.cwd().writeFile(.{ .sub_path = path, .data = content }) catch return view.ret(seq, 0, "{\"ok\":false}");
+    view.ret(seq, 0, "{\"ok\":true}");
+}
+
+fn onFileSaveAs(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
+    const view = WebView{ .webview = data };
+    if (builtin.os.tag == .windows) {
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const args = jsonArray(a, req) orelse return view.ret(seq, 0, "{\"ok\":false}");
+        if (args.len < 2) return view.ret(seq, 0, "{\"ok\":false}");
+        const name = decodeArg(a, args[0]) orelse return view.ret(seq, 0, "{\"ok\":false}");
+        const content = decodeArg(a, args[1]) orelse return view.ret(seq, 0, "{\"ok\":false}");
+        const path = (dialogs.saveDialog(a, name) catch null) orelse return view.ret(seq, 0, "{\"ok\":false}");
+        std.fs.cwd().writeFile(.{ .sub_path = path, .data = content }) catch return view.ret(seq, 0, "{\"ok\":false}");
+        const pb = encodeB64(a, path) catch "";
+        const nb = encodeB64(a, std.fs.path.basename(path)) catch "";
+        const json = std.fmt.allocPrintZ(a, "{{\"ok\":true,\"path\":\"{s}\",\"name\":\"{s}\"}}", .{ pb, nb }) catch return view.ret(seq, 0, "{\"ok\":false}");
+        view.ret(seq, 0, json);
+    } else {
+        view.ret(seq, 0, "{\"ok\":false}");
+    }
+}
+
+fn decodeArg(a: std.mem.Allocator, v: std.json.Value) ?[]u8 {
+    return switch (v) {
+        .string => |s| decodeB64(a, s) catch null,
+        else => null,
+    };
 }
 
 fn firstStringArg(a: std.mem.Allocator, req: []const u8) ?[]const u8 {
