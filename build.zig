@@ -67,6 +67,7 @@ fn addWebStep(b: *std.Build, libtb32: *std.Build.Dependency) void {
         .{ "src/web/index.web.html", "index.html" },
         .{ "src/web/wasm-bridge.js", "wasm-bridge.js" },
         .{ "src/web/app.js", "app.js" },
+        .{ "src/web/mobile.js", "mobile.js" },
         .{ "src/web/editor.js", "editor.js" },
         .{ "src/web/terminal.js", "terminal.js" },
         .{ "src/web/debugger.js", "debugger.js" },
