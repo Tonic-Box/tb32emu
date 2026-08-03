@@ -30,6 +30,8 @@ const SYS_mprotect = 102;
 
 const TIOCGWINSZ = 0x5413;
 const MAP_ANON = 0x20;
+const DEFAULT_COLS = 80;
+const DEFAULT_ROWS = 24;
 const MMAP_BASE: u32 = 8 * 1024 * 1024;
 const MMAP_END: u32 = 12 * 1024 * 1024;
 const ENOSYS: u32 = @bitCast(@as(i32, -38));
@@ -46,8 +48,6 @@ pub const RunConfig = struct {
     seed: ?u64 = null,
 };
 
-const TERM_COLS: u16 = 80;
-const TERM_ROWS: u16 = 24;
 
 /// Why a `tick` returned control to the caller.
 pub const Status = union(enum) {
@@ -88,6 +88,8 @@ pub const Emulator = struct {
     use_seed: bool,
     mmap_next: u32,
     line_map: std.ArrayList(tb32.LineEntry),
+    term_cols: u32,
+    term_rows: u32,
 
     pub fn init(gpa: std.mem.Allocator) !Emulator {
         const ram = try gpa.alloc(u8, MEM_SIZE);
@@ -112,6 +114,8 @@ pub const Emulator = struct {
             .use_seed = false,
             .mmap_next = MMAP_BASE,
             .line_map = std.ArrayList(tb32.LineEntry).init(gpa),
+            .term_cols = DEFAULT_COLS,
+            .term_rows = DEFAULT_ROWS,
         };
     }
 
@@ -351,7 +355,7 @@ pub const Emulator = struct {
             },
             SYS_ioctl => {
                 if (a2 == TIOCGWINSZ) {
-                    self.putU32(a3, (@as(u32, TERM_COLS) << 16) | TERM_ROWS);
+                    self.putU32(a3, (self.term_cols << 16) | self.term_rows);
                     self.setR1(0);
                 } else {
                     self.setR1(EBADF);

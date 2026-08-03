@@ -1,47 +1,85 @@
 (function () {
-  var ROWS = 24, COLS = 80;
-  var vt = window.TBXVT.createTerminal(COLS, ROWS);
-  var pre = null, raw = false, active = false, lineBuf = "", inputBuf = "";
+  var vt = window.TBXVT.createTerminal(80, 24);
+  var host = null, canvas = null, ctx = null;
+  var raw = false, active = false, lineBuf = "", inputBuf = "";
+  var cw = 8, ch = 17, fontpx = 14, dpr = 1;
+  var BG = "#0b0e14", FG = "#c0caf5";
 
-  function esc(s) {
-    return String(s).replace(/[&<>"]/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
-    });
-  }
+  function hexOf(r, g, b) { return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1); }
 
-  function cellClass(row, c) {
-    var f = row.f[c], b = row.b[c], a = row.a[c], cls = "";
-    if (a & 1) { var t = f; f = b; b = t; if (!f && !b) return (a & 2) ? "vt-rev vt-bold" : "vt-rev"; }
-    if (f) cls = "vt-fg-" + f;
-    if (b) cls = cls ? cls + " vt-bg-" + b : "vt-bg-" + b;
-    if (a & 2) cls = cls ? cls + " vt-bold" : "vt-bold";
-    return cls;
-  }
-
-  function rowHtml(row, curCol) {
-    var n = row.c.length, last = -1;
-    for (var c = 0; c < n; c++) if (row.c[c] !== " " || (row.a[c] & 1) || row.f[c] || row.b[c]) last = c;
-    if (curCol != null && curCol > last) last = curCol;
-    var html = "", i = 0;
-    while (i <= last) {
-      if (i === curCol) { html += '<span class="vt-cursor">' + esc(row.c[i]) + "</span>"; i++; continue; }
-      var cls = cellClass(row, i), text = "", j = i;
-      while (j <= last && j !== curCol && cellClass(row, j) === cls) { text += row.c[j]; j++; }
-      var e = esc(text);
-      html += cls ? '<span class="' + cls + '">' + e + "</span>" : e;
-      i = j;
+  var PAL = (function () {
+    var p = new Array(256), i;
+    var base = [null, "#565f89", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#c0caf5", "#7681b3", "#ff7a93", "#b9f38a", "#ffce8a", "#9db4ff", "#d3bbff", "#a5e9ff"];
+    for (i = 0; i < 16; i++) p[i] = base[i];
+    var game = ["#5c94fc", "#c84c0c", "#e39b00", "#e52521", "#4058e0", "#fbd7b5", "#7c3f00", "#ffffff", "#000000", "#00a800", "#80d010", "#fac000", "#b8621b", "#3cbc3c", "#9c9c9c", "#e02020"];
+    for (i = 16; i < 32; i++) p[i] = game[i - 16];
+    function cv(v) { return v ? 55 + v * 40 : 0; }
+    for (i = 32; i < 232; i++) {
+      var n = i - 16, r = Math.floor(n / 36) % 6, g = Math.floor(n / 6) % 6, b = n % 6;
+      p[i] = hexOf(cv(r), cv(g), cv(b));
     }
-    return html;
+    for (i = 232; i < 256; i++) { var v = 8 + (i - 232) * 10; p[i] = hexOf(v, v, v); }
+    return p;
+  })();
+
+  function fgIndex(row, c) { return (row.a[c] & 1) ? row.b[c] : row.f[c]; }
+  function bgIndex(row, c) { return (row.a[c] & 1) ? row.f[c] : row.b[c]; }
+  function fgColor(i) { return i > 0 ? (PAL[i] || FG) : FG; }
+
+  function setFont() {
+    ctx.font = fontpx + 'px "Cascadia Code","JetBrains Mono",Consolas,monospace';
+    ctx.textBaseline = "top";
+  }
+
+  function measure() {
+    setFont();
+    cw = ctx.measureText("M").width || 8;
+    ch = Math.round(fontpx * 1.25);
   }
 
   function render() {
-    if (!pre) return;
-    var vp = vt.viewport(), cur = vt.cursor(), html = "";
-    for (var r = 0; r < ROWS; r++) {
-      html += rowHtml(vp[r], (cur.visible && r === cur.r) ? cur.c : null);
-      if (r < ROWS - 1) html += "\n";
+    if (!ctx) return;
+    var vp = vt.viewport(), cur = vt.cursor(), rows = vt.rows(), cols = vt.cols();
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, cols * cw + 2, rows * ch + 2);
+    setFont();
+    for (var r = 0; r < rows; r++) {
+      var row = vp[r], y = r * ch, c;
+      for (c = 0; c < cols; c++) {
+        var b = bgIndex(row, c);
+        if (b > 0) { ctx.fillStyle = PAL[b] || BG; ctx.fillRect(c * cw, y, cw + 1, ch); }
+      }
+      c = 0;
+      while (c < cols) {
+        var col = fgColor(fgIndex(row, c)), start = c, run = "";
+        while (c < cols && fgColor(fgIndex(row, c)) === col) { run += row.c[c]; c++; }
+        ctx.fillStyle = col;
+        ctx.fillText(run, start * cw, y);
+      }
     }
-    pre.innerHTML = html;
+    if (cur.visible && cur.r < rows) {
+      ctx.fillStyle = FG;
+      ctx.fillRect(cur.c * cw, cur.r * ch, cw, ch);
+      ctx.fillStyle = BG;
+      ctx.fillText(vp[cur.r].c[cur.c] || " ", cur.c * cw, cur.r * ch);
+    }
+  }
+
+  function fit() {
+    if (!canvas || !host || host.clientWidth === 0) return Promise.resolve();
+    dpr = window.devicePixelRatio || 1;
+    measure();
+    var cols = Math.max(20, Math.min(200, Math.floor((host.clientWidth - 16) / cw)));
+    var rows = Math.max(5, Math.min(60, Math.floor((host.clientHeight - 12) / ch)));
+    canvas.width = Math.ceil(cols * cw * dpr);
+    canvas.height = Math.ceil(rows * ch * dpr);
+    canvas.style.width = Math.ceil(cols * cw) + "px";
+    canvas.style.height = Math.ceil(rows * ch) + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    vt.resize(cols, rows);
+    render();
+    if (window.setTermSize) return window.setTermSize(cols, rows);
+    return Promise.resolve();
   }
 
   function keyBytes(e) {
@@ -85,12 +123,16 @@
 
   window.term = {
     attach: function (el) {
+      host = el;
       el.innerHTML = "";
-      pre = document.createElement("pre");
-      pre.className = "vt-screen";
-      el.appendChild(pre);
+      canvas = document.createElement("canvas");
+      canvas.className = "vt-canvas";
+      el.appendChild(canvas);
+      ctx = canvas.getContext("2d");
+      measure();
       render();
     },
+    fit: fit,
     reset: function () { vt.reset(); lineBuf = ""; inputBuf = ""; raw = false; render(); },
     write: function (s) { vt.write(s); render(); },
     setRaw: function (v) { raw = !!v; },

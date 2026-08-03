@@ -27,6 +27,13 @@
     <button id="config" class="tbtn" title="Run configuration">Config</button>
     <button id="assemble" class="tbtn" title="Assemble (Ctrl-B)">Assemble</button>
     <span class="tbsep"></span>
+    <select id="speed" class="tsel" title="Run speed">
+      <option value="full">Full Speed</option>
+      <option value="fast">Fast</option>
+      <option value="medium">Medium</option>
+      <option value="slow">Slow</option>
+      <option value="crawl">Crawl</option>
+    </select>
     <button id="run" class="tbtn tbtn-run" title="Run">Run</button>
     <button id="debug" class="tbtn" title="Debug (pause at entry)">Debug</button>
     <button id="step" class="tbtn" title="Step one instruction" disabled>Step</button>
@@ -74,6 +81,17 @@
     <div class="modal-actions">
       <button id="cfg-cancel" class="tbtn">Cancel</button>
       <button id="cfg-save" class="tbtn tbtn-run">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="confirm-modal" class="modal hidden">
+  <div class="modal-box">
+    <h2>Unsaved changes</h2>
+    <p id="confirm-msg" class="hint"></p>
+    <div class="modal-actions">
+      <button id="confirm-cancel" class="tbtn">Cancel</button>
+      <button id="confirm-ok" class="tbtn tbtn-danger">Discard</button>
     </div>
   </div>
 </div>

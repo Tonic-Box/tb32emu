@@ -3,6 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const want_console = b.option(bool, "console", "Attach a console window for stderr and panic output") orelse false;
 
     const libtb32 = b.dependency("tb32", .{
         .target = target,
@@ -25,7 +26,7 @@ pub fn build(b: *std.Build) void {
     exe.linkLibCpp();
     if (target.result.os.tag == .windows) {
         exe.addWin32ResourceFile(.{ .file = b.path("app.rc") });
-        if (optimize != .Debug) exe.subsystem = .Windows;
+        if (!want_console) exe.subsystem = .Windows;
     }
     b.installArtifact(exe);
 

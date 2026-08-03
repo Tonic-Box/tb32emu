@@ -27,6 +27,29 @@ html, body {
   height: 100%;
 }
 
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--panel);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border: 3px solid var(--panel);
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--panel);
+}
+
 body {
   background: var(--bg);
   color: var(--text);
@@ -146,6 +169,21 @@ body {
   cursor: default;
 }
 
+.tsel {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tsel:hover {
+  border-color: var(--blue);
+}
+
 .tbtn-run {
   color: var(--green);
   border-color: color-mix(in srgb, var(--green) 40%, var(--border));
@@ -154,6 +192,16 @@ body {
 .tbtn-run:hover:not(:disabled) {
   color: var(--green);
   border-color: var(--green);
+}
+
+.tbtn-danger {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 40%, var(--border));
+}
+
+.tbtn-danger:hover:not(:disabled) {
+  color: var(--red);
+  border-color: var(--red);
 }
 
 .brand {
@@ -192,6 +240,12 @@ body {
 .tab.active {
   color: var(--heading);
   background: var(--bg);
+}
+
+.tab-dot {
+  color: var(--blue);
+  font-size: 9px;
+  line-height: 1;
 }
 
 .tab .close {
@@ -506,6 +560,10 @@ body {
 #term-host .vt-screen {
   font-family: var(--mono);
   font-size: 13px;
+}
+
+.vt-canvas {
+  display: block;
 }
 
 #bottom-tabs {

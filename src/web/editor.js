@@ -56,6 +56,12 @@
     tabs.forEach(function (t, i) {
       var el = document.createElement("div");
       el.className = "tab" + (i === active ? " active" : "");
+      if (t.doc.getValue() !== t.saved) {
+        var dot = document.createElement("span");
+        dot.className = "tab-dot";
+        dot.textContent = "●";
+        el.appendChild(dot);
+      }
       var name = document.createElement("span");
       name.textContent = t.name;
       name.addEventListener("click", function () { select(i); });
@@ -63,7 +69,7 @@
       close.className = "close";
       close.textContent = "×";
       close.title = "Close";
-      close.addEventListener("click", function (e) { e.stopPropagation(); closeTab(i); });
+      close.addEventListener("click", function (e) { e.stopPropagation(); requestClose(i); });
       el.appendChild(name);
       el.appendChild(close);
       bar.appendChild(el);
@@ -123,10 +129,19 @@
     }
   }
 
-  function newTab(name, content, path) {
-    tabs.push({ name: name || nextName(), doc: CM.Doc(content || "", "tb32"), path: path || null, bps: new Set() });
+  function newTab(name, content, path, saved) {
+    tabs.push({ name: name || nextName(), doc: CM.Doc(content || "", "tb32"), path: path || null, bps: new Set(), saved: saved === undefined ? null : saved });
     active = -1;
     select(tabs.length - 1);
+  }
+
+  function requestClose(i) {
+    var t = tabs[i];
+    if (t.doc.getValue() !== t.saved && window.confirmDialog) {
+      window.confirmDialog('Discard unsaved changes to "' + t.name + '"?', function () { closeTab(i); });
+    } else {
+      closeTab(i);
+    }
   }
 
   function closeTab(i) {
@@ -140,6 +155,19 @@
     var target = active;
     active = -1;
     select(target);
+  }
+
+  function refreshDirty() {
+    if (active < 0) return;
+    var d = tabs[active].doc.getValue() !== tabs[active].saved;
+    if (d !== tabs[active]._dirty) { tabs[active]._dirty = d; render(); }
+  }
+
+  function markSaved() {
+    if (active < 0) return;
+    tabs[active].saved = tabs[active].doc.getValue();
+    tabs[active]._dirty = false;
+    render();
   }
 
   function clearError() {
@@ -172,7 +200,7 @@
         "Ctrl-S": function () { if (window.fileMenu) window.fileMenu.save(); },
       },
     });
-    cm.on("change", clearError);
+    cm.on("change", function () { clearError(); refreshDirty(); });
     cm.on("gutterClick", function (c, n) { toggleBp(n); });
     newTab("scratch.s", SAMPLE);
     setTimeout(function () { cm.refresh(); }, 0);
@@ -182,7 +210,8 @@
     init: init,
     refresh: function () { if (cm) cm.refresh(); },
     newTab: newTab,
-    openTab: function (name, content, path) { newTab(name, content, path); },
+    openTab: function (name, content, path) { newTab(name, content, path, content); },
+    markSaved: markSaved,
     markError: markError,
     clearError: clearError,
     activeContent: function () { return active >= 0 ? tabs[active].doc.getValue() : ""; },
@@ -195,6 +224,8 @@
       if (active < 0) return;
       tabs[active].path = path;
       if (name) tabs[active].name = name;
+      tabs[active].saved = tabs[active].doc.getValue();
+      tabs[active]._dirty = false;
       render();
     },
   };

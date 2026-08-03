@@ -44,6 +44,8 @@ pub fn main() !void {
     w.bind("dbgSnapshot", &dbgsnap_ctx);
     var dbglines_ctx = WebView.CallbackContext(&onDbgLines).init(w.webview);
     w.bind("dbgLines", &dbglines_ctx);
+    var termsize_ctx = WebView.CallbackContext(&onSetTermSize).init(w.webview);
+    w.bind("setTermSize", &termsize_ctx);
     var fopen_ctx = WebView.CallbackContext(&onFileOpen).init(w.webview);
     w.bind("fileOpen", &fopen_ctx);
     var fsave_ctx = WebView.CallbackContext(&onFileSave).init(w.webview);
@@ -285,6 +287,19 @@ fn onStop(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
     _ = req;
     emu.started = false;
     const view = WebView{ .webview = data };
+    view.ret(seq, 0, "{\"ok\":true}");
+}
+
+fn onSetTermSize(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
+    const view = WebView{ .webview = data };
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    if (jsonArray(arena.allocator(), req)) |args| {
+        if (args.len >= 2) {
+            if (jsonU32(args[0])) |c| emu.term_cols = c;
+            if (jsonU32(args[1])) |r| emu.term_rows = r;
+        }
+    }
     view.ret(seq, 0, "{\"ok\":true}");
 }
 

@@ -31,6 +31,7 @@
     document.querySelectorAll("#bottom-body .panel").forEach(function (p) {
       p.classList.toggle("active", p.id === name);
     });
+    if (name === "terminal") window.term.fit();
   }
 
   function initBottomTabs() {
@@ -140,7 +141,7 @@
     var path = window.editor.activePath();
     if (!path) return fileSaveAs();
     var res = await window.fileSave(b64enc(path), b64enc(window.editor.activeContent()));
-    if (res && res.ok) logConsole("saved " + window.editor.activeName(), "log-ok");
+    if (res && res.ok) { window.editor.markSaved(); logConsole("saved " + window.editor.activeName(), "log-ok"); }
     else logConsole("save failed", "log-error");
   }
 
@@ -153,6 +154,21 @@
   }
 
   window.fileMenu = { new: fileNew, open: fileOpen, save: fileSave, saveas: fileSaveAs };
+
+  var confirmCb = null;
+  function confirmDialog(msg, onConfirm) {
+    document.getElementById("confirm-msg").textContent = msg;
+    confirmCb = onConfirm;
+    document.getElementById("confirm-modal").classList.remove("hidden");
+  }
+  window.confirmDialog = confirmDialog;
+
+  function resolveConfirm(run) {
+    var cb = confirmCb;
+    confirmCb = null;
+    document.getElementById("confirm-modal").classList.add("hidden");
+    if (run && cb) cb();
+  }
 
   function outToTerm(b64) {
     if (!b64) return;
@@ -212,17 +228,41 @@
     }
   }
 
+  var SPEEDS = {
+    full: { steps: 1000000, delay: 0, live: false },
+    fast: { steps: 1, delay: 60, live: true },
+    medium: { steps: 1, delay: 120, live: true },
+    slow: { steps: 1, delay: 300, live: true },
+    crawl: { steps: 1, delay: 600, live: true },
+  };
+
+  function currentSpeed() {
+    return SPEEDS[document.getElementById("speed").value] || SPEEDS.full;
+  }
+
   async function tickOnce() {
     if (emuState !== "running") return;
+    var sp = currentSpeed();
     var input = window.term.takeInput();
-    var res = await window.emuTick(input ? btoa(input) : "", 200000);
+    var res = await window.emuTick(input ? btoa(input) : "", sp.steps);
     if (!res) { endRun("emulator error", "log-error", "err", "error"); return; }
     outToTerm(res.out);
     window.term.setRaw(res.raw);
     switch (res.state) {
-      case "running": setStatus("running", "running"); setTimeout(tickOnce, 0); break;
-      case "sleep": setStatus("running", "running"); setTimeout(tickOnce, res.ms || 0); break;
-      case "waiting": setStatus("running", "waiting for input"); setTimeout(tickOnce, 16); break;
+      case "running":
+        setStatus("running", "running");
+        if (sp.live) await updateDebugView(true);
+        setTimeout(tickOnce, sp.delay);
+        break;
+      case "sleep":
+        setStatus("running", "running");
+        if (sp.live) await updateDebugView(true);
+        setTimeout(tickOnce, Math.max(sp.delay, res.ms || 0));
+        break;
+      case "waiting":
+        setStatus("running", "waiting for input");
+        setTimeout(tickOnce, 16);
+        break;
       case "breakpoint":
         setState("paused");
         setStatus("warn", "paused (breakpoint 0x" + hx(res.pc) + ")");
@@ -240,9 +280,10 @@
     if (!res || !res.ok) { showError(res); return; }
     await loadLineMap();
     await registerBreakpoints();
-    window.term.reset();
-    window.editor.clearHighlight();
     showPanel("terminal");
+    window.term.reset();
+    await window.term.fit();
+    window.editor.clearHighlight();
     setState("running");
     setStatus("running", "running");
     logRunStart();
@@ -256,7 +297,9 @@
     if (!res || !res.ok) { showError(res); return; }
     await loadLineMap();
     await registerBreakpoints();
+    showPanel("terminal");
     window.term.reset();
+    await window.term.fit();
     setState("paused");
     setStatus("warn", "paused (entry)");
     logConsole("debugging " + window.editor.activeName(), "log-muted");
@@ -322,7 +365,7 @@
       window.editor.refresh();
     });
     document.addEventListener("mouseup", function () {
-      if (dragging) { dragging = false; document.body.style.cursor = ""; }
+      if (dragging) { dragging = false; document.body.style.cursor = ""; window.term.fit(); }
     });
   }
 
@@ -331,6 +374,7 @@
   window.dbg.attach(document.getElementById("debug-pane"));
   initBottomTabs();
   initDivider();
+  window.addEventListener("resize", function () { window.term.fit(); });
   document.getElementById("assemble").addEventListener("click", runAssemble);
   document.getElementById("run").addEventListener("click", runProgram);
   document.getElementById("debug").addEventListener("click", debugProgram);
@@ -341,6 +385,8 @@
   document.getElementById("config").addEventListener("click", openConfig);
   document.getElementById("cfg-save").addEventListener("click", saveConfig);
   document.getElementById("cfg-cancel").addEventListener("click", closeConfig);
+  document.getElementById("confirm-cancel").addEventListener("click", function () { resolveConfirm(false); });
+  document.getElementById("confirm-ok").addEventListener("click", function () { resolveConfirm(true); });
   document.getElementById("clear-console").addEventListener("click", function () {
     document.getElementById("console").innerHTML = "";
   });
