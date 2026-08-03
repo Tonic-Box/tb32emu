@@ -42,6 +42,8 @@ pub fn main() !void {
     w.bind("dbgBreak", &dbgbreak_ctx);
     var dbgsnap_ctx = WebView.CallbackContext(&onDbgSnapshot).init(w.webview);
     w.bind("dbgSnapshot", &dbgsnap_ctx);
+    var dbglines_ctx = WebView.CallbackContext(&onDbgLines).init(w.webview);
+    w.bind("dbgLines", &dbglines_ctx);
     var fopen_ctx = WebView.CallbackContext(&onFileOpen).init(w.webview);
     w.bind("fileOpen", &fopen_ctx);
     var fsave_ctx = WebView.CallbackContext(&onFileSave).init(w.webview);
@@ -200,7 +202,7 @@ fn onDbgStep(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
     const view = WebView{ .webview = data };
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-    replyStatus(view, seq, arena.allocator(), emu.stepOne());
+    replyStatus(view, seq, arena.allocator(), emu.stepLine());
 }
 
 fn onDbgBreak(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
@@ -236,7 +238,6 @@ fn rd32(ram: []const u8, addr: u32) u32 {
 }
 
 fn buildSnapshot(a: std.mem.Allocator) ![:0]const u8 {
-    const tb = @import("tb32");
     var buf = std.ArrayList(u8).init(a);
     const w = buf.writer();
     try w.print("{{\"pc\":{d},\"brk\":{d},\"flags\":{{\"z\":{},\"n\":{},\"c\":{},\"v\":{}}},\"regs\":[", .{
@@ -246,22 +247,10 @@ fn buildSnapshot(a: std.mem.Allocator) ![:0]const u8 {
         if (i > 0) try w.writeAll(",");
         try w.print("{d}", .{v});
     }
-    try w.writeAll("],\"disasm\":[");
-    var dbuf: [64]u8 = undefined;
-    var first = true;
-    var k: u32 = 0;
-    while (k < 24) : (k += 1) {
-        const addr = emu.cpu.pc +% k *% 4;
-        if (@as(u64, addr) + 4 > emu.ram.len) break;
-        const text = tb.disasm(rd32(emu.ram, addr), addr, &dbuf);
-        if (!first) try w.writeAll(",");
-        first = false;
-        try w.print("{{\"a\":{d},\"t\":\"{s}\",\"bp\":{}}}", .{ addr, text, emu.hasBreak(addr) });
-    }
     try w.writeAll("],\"stack\":[");
     const sp = emu.cpu.r[13];
-    first = true;
-    k = 0;
+    var first = true;
+    var k: u32 = 0;
     while (k < 8) : (k += 1) {
         const addr = sp +% k *% 4;
         if (@as(u64, addr) + 4 > emu.ram.len) break;
@@ -272,6 +261,24 @@ fn buildSnapshot(a: std.mem.Allocator) ![:0]const u8 {
     try w.writeAll("]}");
     try buf.append(0);
     return buf.items[0 .. buf.items.len - 1 :0];
+}
+
+fn onDbgLines(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
+    _ = req;
+    const view = WebView{ .webview = data };
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var buf = std.ArrayList(u8).init(a);
+    const w = buf.writer();
+    w.writeAll("[") catch return view.ret(seq, 0, "[]");
+    for (emu.line_map.items, 0..) |e, i| {
+        if (i > 0) w.writeAll(",") catch {};
+        w.print("{{\"a\":{d},\"l\":{d}}}", .{ e.addr, e.line }) catch {};
+    }
+    w.writeAll("]") catch {};
+    buf.append(0) catch return view.ret(seq, 0, "[]");
+    view.ret(seq, 0, buf.items[0 .. buf.items.len - 1 :0]);
 }
 
 fn onStop(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {

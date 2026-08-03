@@ -87,6 +87,7 @@ pub const Emulator = struct {
     prng: std.Random.DefaultPrng,
     use_seed: bool,
     mmap_next: u32,
+    line_map: std.ArrayList(tb32.LineEntry),
 
     pub fn init(gpa: std.mem.Allocator) !Emulator {
         const ram = try gpa.alloc(u8, MEM_SIZE);
@@ -110,13 +111,16 @@ pub const Emulator = struct {
             .prng = std.Random.DefaultPrng.init(0),
             .use_seed = false,
             .mmap_next = MMAP_BASE,
+            .line_map = std.ArrayList(tb32.LineEntry).init(gpa),
         };
     }
 
     /// Assembles `src`, loads it, and resets the machine ready to run. On assembly
     /// failure `diag` is filled and the error is returned.
     pub fn start(self: *Emulator, src: []const u8, cfg: RunConfig, diag: *tb32.Diagnostic) tb32.assembler.Error!void {
-        const tbx = try tb32.assembleDiag(self.gpa, src, diag);
+        self.line_map.clearRetainingCapacity();
+        self.breakpoints.clearRetainingCapacity();
+        const tbx = try tb32.assembleDebug(self.gpa, src, diag, &self.line_map);
         defer self.gpa.free(tbx);
         @memset(self.ram, 0);
         const info = loader.load(self.ram, tbx) catch {
@@ -192,6 +196,7 @@ pub const Emulator = struct {
         self.breakpoints.deinit();
         self.env.deinit();
         self.env_arena.deinit();
+        self.line_map.deinit();
     }
 
     pub fn hasBreak(self: *Emulator, addr: u32) bool {
@@ -250,6 +255,30 @@ pub const Emulator = struct {
             .cont => .running,
             .stop => |s| s,
         };
+    }
+
+    fn lineOf(self: *Emulator, pc: u32) u32 {
+        for (self.line_map.items) |e| {
+            if (e.addr == pc) return e.line;
+        }
+        return 0;
+    }
+
+    /// Steps until the current source line changes or the program stops, so one call
+    /// advances a whole source line even when it assembles to several instructions.
+    pub fn stepLine(self: *Emulator) Status {
+        if (!self.started) return .{ .exited = 0 };
+        const start_line = self.lineOf(self.cpu.pc);
+        var guard: u32 = 0;
+        while (guard < 1_000_000) : (guard += 1) {
+            const st = self.stepOne();
+            switch (st) {
+                .running => {},
+                else => return st,
+            }
+            if (self.lineOf(self.cpu.pc) != start_line) return .running;
+        }
+        return .running;
     }
 
     const StepOutcome = union(enum) { cont, stop: Status };
@@ -601,6 +630,24 @@ test "stepOne advances exactly one instruction" {
     const pc0 = emu.cpu.pc;
     _ = emu.stepOne();
     try std.testing.expectEqual(pc0 + 4, emu.cpu.pc);
+}
+
+test "stepLine advances past a multi-instruction line" {
+    const a = std.testing.allocator;
+    var emu = try Emulator.init(a);
+    defer emu.deinit();
+    var diag: tb32.Diagnostic = .{};
+    const src =
+        \\.text
+        \\_start:
+        \\    li r1, 5
+        \\    li r2, 6
+        \\    hlt
+    ;
+    try emu.start(src, .{}, &diag);
+    const pc0 = emu.cpu.pc;
+    try std.testing.expect(emu.stepLine() == .running);
+    try std.testing.expectEqual(pc0 + 8, emu.cpu.pc);
 }
 
 test "seeded getrandom is reproducible" {

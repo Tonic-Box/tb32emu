@@ -1,6 +1,7 @@
 (function () {
   var decoder = new TextDecoder();
   var emuState = "idle";
+  var addrToLine = {}, lineToAddr = {};
 
   function hx(n) { return (n >>> 0).toString(16); }
 
@@ -30,7 +31,6 @@
     document.querySelectorAll("#bottom-body .panel").forEach(function (p) {
       p.classList.toggle("active", p.id === name);
     });
-    document.getElementById("bottom").classList.toggle("bottom-tall", name === "terminal");
   }
 
   function initBottomTabs() {
@@ -41,10 +41,14 @@
 
   function setState(s) {
     emuState = s;
-    document.getElementById("run").disabled = s === "running";
-    document.getElementById("stop").disabled = !(s === "running" || s === "paused");
-    window.term.setActive(s === "running");
-    window.dbg.setControls(s);
+    var running = s === "running", paused = s === "paused";
+    document.getElementById("run").disabled = running;
+    document.getElementById("debug").disabled = running;
+    document.getElementById("step").disabled = !paused;
+    document.getElementById("continue").disabled = !paused;
+    document.getElementById("pause").disabled = !running;
+    document.getElementById("stop").disabled = !(running || paused);
+    window.term.setActive(running);
   }
 
   async function runAssemble() {
@@ -163,11 +167,40 @@
     showPanel("console");
   }
 
+  async function loadLineMap() {
+    addrToLine = {};
+    lineToAddr = {};
+    var lm = await window.dbgLines();
+    if (!lm) return;
+    lm.forEach(function (e) {
+      addrToLine[e.a] = e.l;
+      if (lineToAddr[e.l] === undefined || e.a < lineToAddr[e.l]) lineToAddr[e.l] = e.a;
+    });
+  }
+
+  async function registerBreakpoints() {
+    var lines = window.editor.activeBps();
+    for (var i = 0; i < lines.length; i++) {
+      var addr = lineToAddr[lines[i]];
+      if (addr !== undefined) await window.dbgBreak(addr, true);
+    }
+  }
+
+  async function updateDebugView(doHighlight) {
+    var s = await window.dbgSnapshot();
+    window.dbg.render(s);
+    if (doHighlight && s && s.pc !== undefined && addrToLine[s.pc] !== undefined) {
+      window.editor.highlightLine(addrToLine[s.pc]);
+    } else {
+      window.editor.clearHighlight();
+    }
+  }
+
   function endRun(msg, logcls, kind, text) {
     setState("ended");
     logConsole(msg, logcls);
     setStatus(kind, text);
-    window.dbg.refresh();
+    updateDebugView(false);
   }
 
   function applyEnd(res) {
@@ -194,7 +227,7 @@
         setState("paused");
         setStatus("warn", "paused (breakpoint 0x" + hx(res.pc) + ")");
         logConsole("breakpoint at 0x" + hx(res.pc), "log-warn");
-        window.dbg.refresh();
+        await updateDebugView(true);
         break;
       default: applyEnd(res);
     }
@@ -205,7 +238,10 @@
     window.editor.clearError();
     var res = await window.run(buildRunReq());
     if (!res || !res.ok) { showError(res); return; }
+    await loadLineMap();
+    await registerBreakpoints();
     window.term.reset();
+    window.editor.clearHighlight();
     showPanel("terminal");
     setState("running");
     setStatus("running", "running");
@@ -213,41 +249,44 @@
     setTimeout(tickOnce, 0);
   }
 
+  async function debugProgram() {
+    if (emuState === "running") return;
+    window.editor.clearError();
+    var res = await window.run(buildRunReq());
+    if (!res || !res.ok) { showError(res); return; }
+    await loadLineMap();
+    await registerBreakpoints();
+    window.term.reset();
+    setState("paused");
+    setStatus("warn", "paused (entry)");
+    logConsole("debugging " + window.editor.activeName(), "log-muted");
+    await updateDebugView(true);
+  }
+
   function continueRun() {
     if (emuState !== "paused") return;
+    window.editor.clearHighlight();
     setState("running");
     setStatus("running", "running");
     setTimeout(tickOnce, 0);
   }
 
-  function pauseRun() {
+  async function pauseRun() {
     if (emuState !== "running") return;
     setState("paused");
     setStatus("warn", "paused");
-    window.dbg.refresh();
+    await updateDebugView(true);
   }
 
   async function stepProgram() {
-    if (emuState === "running") return;
-    if (emuState !== "paused") {
-      window.editor.clearError();
-      var r = await window.run(buildRunReq());
-      if (!r || !r.ok) { showError(r); return; }
-      window.term.reset();
-      showPanel("terminal");
-      setState("paused");
-      setStatus("warn", "paused (entry)");
-      logConsole("debugging " + window.editor.activeName(), "log-muted");
-      window.dbg.refresh();
-      return;
-    }
+    if (emuState !== "paused") return;
     var res = await window.dbgStep();
     if (!res) { endRun("emulator error", "log-error", "err", "error"); return; }
     outToTerm(res.out);
     window.term.setRaw(res.raw);
     if (!applyEnd(res)) {
       setStatus("warn", res.state === "waiting" ? "paused (needs input)" : "paused");
-      window.dbg.refresh();
+      await updateDebugView(true);
     }
   }
 
@@ -257,15 +296,47 @@
     setState("idle");
     setStatus("idle", "stopped");
     logConsole("stopped", "log-muted");
+    window.editor.clearHighlight();
     window.dbg.clear();
+  }
+
+  function initDivider() {
+    var div = document.getElementById("vdivider");
+    var bottom = document.getElementById("bottom");
+    var main = document.getElementById("main");
+    var dragging = false, startY = 0, startH = 0;
+    div.addEventListener("mousedown", function (e) {
+      dragging = true;
+      startY = e.clientY;
+      startH = bottom.offsetHeight;
+      document.body.style.cursor = "row-resize";
+      e.preventDefault();
+    });
+    document.addEventListener("mousemove", function (e) {
+      if (!dragging) return;
+      var h = startH - (e.clientY - startY);
+      var max = main.offsetHeight - 120;
+      if (h < 80) h = 80;
+      if (h > max) h = max;
+      bottom.style.height = h + "px";
+      window.editor.refresh();
+    });
+    document.addEventListener("mouseup", function () {
+      if (dragging) { dragging = false; document.body.style.cursor = ""; }
+    });
   }
 
   window.editor.init();
   window.term.attach(document.getElementById("term-host"));
   window.dbg.attach(document.getElementById("debug-pane"));
   initBottomTabs();
+  initDivider();
   document.getElementById("assemble").addEventListener("click", runAssemble);
   document.getElementById("run").addEventListener("click", runProgram);
+  document.getElementById("debug").addEventListener("click", debugProgram);
+  document.getElementById("step").addEventListener("click", stepProgram);
+  document.getElementById("continue").addEventListener("click", continueRun);
+  document.getElementById("pause").addEventListener("click", pauseRun);
   document.getElementById("stop").addEventListener("click", stopProgram);
   document.getElementById("config").addEventListener("click", openConfig);
   document.getElementById("cfg-save").addEventListener("click", saveConfig);
@@ -280,7 +351,6 @@
       b.blur();
     });
   });
-  window.emuControls = { step: stepProgram, cont: continueRun, pause: pauseRun, run: runProgram, stop: stopProgram };
   setState("idle");
   logConsole("tb32emu ready.", "log-muted");
 })();

@@ -79,14 +79,52 @@
   function select(i) {
     if (i === active) return;
     clearError();
+    clearHighlight();
     active = i;
     cm.swapDoc(tabs[i].doc);
     render();
     cm.focus();
   }
 
+  var currentLine = null;
+
+  function bpMarker() {
+    var el = document.createElement("span");
+    el.className = "bp-dot";
+    el.textContent = "●";
+    return el;
+  }
+
+  function toggleBp(n) {
+    if (active < 0) return;
+    var bps = tabs[active].bps;
+    if (bps.has(n)) {
+      bps.delete(n);
+      cm.setGutterMarker(n, "bp-gutter", null);
+    } else {
+      bps.add(n);
+      cm.setGutterMarker(n, "bp-gutter", bpMarker());
+    }
+  }
+
+  function highlightLine(line) {
+    clearHighlight();
+    var l = line - 1;
+    if (l < 0 || l >= cm.lineCount()) return;
+    cm.addLineClass(l, "background", "cm-current-line");
+    currentLine = l;
+    cm.scrollIntoView({ line: l, ch: 0 }, 60);
+  }
+
+  function clearHighlight() {
+    if (currentLine !== null) {
+      cm.removeLineClass(currentLine, "background", "cm-current-line");
+      currentLine = null;
+    }
+  }
+
   function newTab(name, content, path) {
-    tabs.push({ name: name || nextName(), doc: CM.Doc(content || "", "tb32"), path: path || null });
+    tabs.push({ name: name || nextName(), doc: CM.Doc(content || "", "tb32"), path: path || null, bps: new Set() });
     active = -1;
     select(tabs.length - 1);
   }
@@ -125,6 +163,7 @@
       mode: "tb32",
       theme: "tb32",
       lineNumbers: true,
+      gutters: ["CodeMirror-linenumbers", "bp-gutter"],
       indentUnit: 4,
       tabSize: 4,
       indentWithTabs: false,
@@ -134,12 +173,14 @@
       },
     });
     cm.on("change", clearError);
+    cm.on("gutterClick", function (c, n) { toggleBp(n); });
     newTab("scratch.s", SAMPLE);
     setTimeout(function () { cm.refresh(); }, 0);
   }
 
   window.editor = {
     init: init,
+    refresh: function () { if (cm) cm.refresh(); },
     newTab: newTab,
     openTab: function (name, content, path) { newTab(name, content, path); },
     markError: markError,
@@ -147,6 +188,9 @@
     activeContent: function () { return active >= 0 ? tabs[active].doc.getValue() : ""; },
     activeName: function () { return active >= 0 ? tabs[active].name : ""; },
     activePath: function () { return active >= 0 ? tabs[active].path : null; },
+    activeBps: function () { return active >= 0 ? Array.from(tabs[active].bps).map(function (n) { return n + 1; }) : []; },
+    highlightLine: highlightLine,
+    clearHighlight: clearHighlight,
     setActivePath: function (path, name) {
       if (active < 0) return;
       tabs[active].path = path;

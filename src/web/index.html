@@ -26,34 +26,39 @@
     <span class="grow"></span>
     <button id="config" class="tbtn" title="Run configuration">Config</button>
     <button id="assemble" class="tbtn" title="Assemble (Ctrl-B)">Assemble</button>
+    <span class="tbsep"></span>
     <button id="run" class="tbtn tbtn-run" title="Run">Run</button>
+    <button id="debug" class="tbtn" title="Debug (pause at entry)">Debug</button>
+    <button id="step" class="tbtn" title="Step one instruction" disabled>Step</button>
+    <button id="continue" class="tbtn" title="Continue" disabled>Continue</button>
+    <button id="pause" class="tbtn" title="Pause" disabled>Pause</button>
     <button id="stop" class="tbtn" title="Stop" disabled>Stop</button>
   </header>
-  <div id="tabbar"></div>
-  <div id="workspace">
-    <div id="editor-pane"><div id="editor"></div></div>
-    <aside id="debug-pane">
-      <h2>Registers</h2>
-      <p class="hint">Run or step a program to inspect CPU state.</p>
-    </aside>
-  </div>
-  <div id="bottom">
-    <div id="bottom-tabs">
-      <button class="btab active" data-panel="console">Console</button>
-      <button class="btab" data-panel="terminal">Terminal</button>
-      <span class="grow"></span>
-      <button id="clear-console" class="clearbtn" title="Clear console">clear</button>
-    </div>
-    <div id="bottom-body">
-      <pre id="console" class="panel active"></pre>
-      <div id="terminal" class="panel">
-        <div class="term-status">
-          <span id="term-dot" class="dot dot-idle"></span>
-          <span id="term-state">idle</span>
+  <div id="main">
+    <div id="left">
+      <div id="tabbar"></div>
+      <div id="editor-pane"><div id="editor"></div></div>
+      <div id="vdivider" title="Drag to resize"></div>
+      <div id="bottom">
+        <div id="bottom-tabs">
+          <button class="btab active" data-panel="console">Console</button>
+          <button class="btab" data-panel="terminal">Terminal</button>
+          <span class="grow"></span>
+          <button id="clear-console" class="clearbtn" title="Clear console">clear</button>
         </div>
-        <div id="term-host"></div>
+        <div id="bottom-body">
+          <pre id="console" class="panel active"></pre>
+          <div id="terminal" class="panel">
+            <div class="term-status">
+              <span id="term-dot" class="dot dot-idle"></span>
+              <span id="term-state">idle</span>
+            </div>
+            <div id="term-host"></div>
+          </div>
+        </div>
       </div>
     </div>
+    <aside id="debug-pane"></aside>
   </div>
 </div>
 

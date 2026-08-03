@@ -218,21 +218,39 @@ body {
   color: var(--blue);
 }
 
-#workspace {
+#main {
   flex: 1;
   display: flex;
   min-height: 0;
 }
 
-#editor-pane {
+#left {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#editor-pane {
+  flex: 1;
+  min-height: 0;
   display: flex;
 }
 
 #editor {
   flex: 1;
   min-width: 0;
+}
+
+#vdivider {
+  flex: none;
+  height: 6px;
+  background: var(--border);
+  cursor: row-resize;
+}
+
+#vdivider:hover {
+  background: var(--blue);
 }
 
 #debug-pane {
@@ -429,16 +447,11 @@ body {
 }
 
 #bottom {
-  height: 200px;
+  height: 240px;
   flex: none;
   display: flex;
   flex-direction: column;
   background: var(--panel);
-  border-top: 1px solid var(--border);
-}
-
-#bottom.bottom-tall {
-  height: 62vh;
 }
 
 #terminal {
@@ -596,4 +609,24 @@ body {
 
 .cm-error-line {
   background: rgba(247, 118, 142, 0.14);
+}
+
+.cm-current-line {
+  background: rgba(122, 162, 247, 0.18);
+}
+
+.CodeMirror .bp-gutter {
+  width: 12px;
+}
+
+.bp-dot {
+  color: var(--red);
+  padding-left: 2px;
+}
+
+.tbsep {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 4px;
 }
