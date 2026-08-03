@@ -1,6 +1,7 @@
 const std = @import("std");
 const tb32 = @import("tb32");
 const loader = @import("loader.zig");
+const platform = @import("platform.zig");
 
 const MEM_SIZE: u32 = 16 * 1024 * 1024;
 const STACK_RESERVE: u32 = 64 * 1024;
@@ -142,7 +143,7 @@ pub const Emulator = struct {
         self.stdin.clearRetainingCapacity();
         self.stdin_pos = 0;
         self.out.clearRetainingCapacity();
-        self.start_ms = std.time.milliTimestamp();
+        self.start_ms = platform.nowMs();
 
         if (cfg.seed) |s| {
             self.prng = std.Random.DefaultPrng.init(s);
@@ -363,23 +364,23 @@ pub const Emulator = struct {
                 return .cont;
             },
             SYS_time => {
-                self.setR1(@truncate(@as(u64, @bitCast(std.time.timestamp()))));
+                self.setR1(@truncate(@as(u64, @bitCast(platform.unixSeconds()))));
                 return .cont;
             },
             SYS_clock_gettime => {
                 if (a1 == 1) {
-                    const ms: u64 = @intCast(std.time.milliTimestamp() - self.start_ms);
+                    const ms: u64 = @intCast(platform.nowMs() - self.start_ms);
                     self.putU32(a2, @truncate(ms / 1000));
                     self.putU32(a2 + 4, @truncate((ms % 1000) * 1_000_000));
                 } else {
-                    self.putU32(a2, @truncate(@as(u64, @bitCast(std.time.timestamp()))));
+                    self.putU32(a2, @truncate(@as(u64, @bitCast(platform.unixSeconds()))));
                     self.putU32(a2 + 4, 0);
                 }
                 self.setR1(0);
                 return .cont;
             },
             SYS_gettimeofday => {
-                self.putU32(a1, @truncate(@as(u64, @bitCast(std.time.timestamp()))));
+                self.putU32(a1, @truncate(@as(u64, @bitCast(platform.unixSeconds()))));
                 self.putU32(a1 + 4, 0);
                 self.setR1(0);
                 return .cont;
@@ -407,7 +408,7 @@ pub const Emulator = struct {
                     if (self.use_seed) {
                         self.prng.random().bytes(self.ram[a1 .. a1 + a2]);
                     } else {
-                        std.crypto.random.bytes(self.ram[a1 .. a1 + a2]);
+                        platform.fillRandom(self.ram[a1 .. a1 + a2]);
                     }
                     self.setR1(a2);
                 } else {

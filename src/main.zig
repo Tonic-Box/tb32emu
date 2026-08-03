@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const WebView = @import("webview").WebView;
 const server = @import("server.zig");
-const assemble = @import("assemble.zig");
+const bridge = @import("bridge.zig");
 const emulator = @import("emulator.zig");
 const dialogs = @import("dialogs.zig");
 
@@ -59,248 +59,41 @@ pub fn main() !void {
     w.run();
 }
 
+const BridgeFn = fn (std.mem.Allocator, *emulator.Emulator, []const u8) [:0]const u8;
+
+fn dispatch(comptime f: BridgeFn, seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
+    const view = WebView{ .webview = data };
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    view.ret(seq, 0, f(arena.allocator(), &emu, req));
+}
+
 fn onAssemble(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
-    const view = WebView{ .webview = data };
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    const src = firstStringArg(a, req) orelse {
-        view.ret(seq, 1, "\"bad request\"");
-        return;
-    };
-    var out: [256]u8 = undefined;
-    view.ret(seq, 0, assemble.assembleToJson(a, src, &out));
+    dispatch(bridge.assemble, seq, req, data);
 }
-
 fn onRun(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
-    const view = WebView{ .webview = data };
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    const args = jsonArray(a, req) orelse {
-        view.ret(seq, 1, "\"bad request\"");
-        return;
-    };
-    const obj = if (args.len >= 1) switch (args[0]) {
-        .object => |o| o,
-        else => null,
-    } else null;
-    if (obj == null) {
-        view.ret(seq, 1, "\"bad request\"");
-        return;
-    }
-    const src = strField(obj.?, "src") orelse {
-        view.ret(seq, 1, "\"bad request\"");
-        return;
-    };
-
-    var arglist = std.ArrayList([]const u8).init(a);
-    if (obj.?.get("args")) |av| switch (av) {
-        .array => |arr| for (arr.items) |it| switch (it) {
-            .string => |s| arglist.append(s) catch {},
-            else => {},
-        },
-        else => {},
-    };
-    var keys = std.ArrayList([]const u8).init(a);
-    var vals = std.ArrayList([]const u8).init(a);
-    if (obj.?.get("env")) |ev| switch (ev) {
-        .array => |arr| for (arr.items) |pair| switch (pair) {
-            .array => |p| if (p.items.len >= 2) {
-                const k = switch (p.items[0]) {
-                    .string => |s| s,
-                    else => continue,
-                };
-                const v = switch (p.items[1]) {
-                    .string => |s| s,
-                    else => continue,
-                };
-                keys.append(k) catch {};
-                vals.append(v) catch {};
-            },
-            else => {},
-        },
-        else => {},
-    };
-    var seed: ?u64 = null;
-    if (obj.?.get("seed")) |sv| switch (sv) {
-        .integer => |n| if (n >= 0) {
-            seed = @intCast(n);
-        },
-        .float => |f| if (f >= 0) {
-            seed = @intFromFloat(f);
-        },
-        else => {},
-    };
-
-    const cfg = emulator.RunConfig{
-        .args = arglist.items,
-        .env_keys = keys.items,
-        .env_vals = vals.items,
-        .seed = seed,
-    };
-    var diag: @import("tb32").Diagnostic = .{};
-    emu.start(src, cfg, &diag) catch {
-        var buf: [256]u8 = undefined;
-        const j = std.fmt.bufPrintZ(&buf, "{{\"ok\":false,\"line\":{d},\"message\":\"{s}\"}}", .{ diag.line, diag.message }) catch "{\"ok\":false,\"line\":0,\"message\":\"error\"}";
-        view.ret(seq, 0, j);
-        return;
-    };
-    view.ret(seq, 0, "{\"ok\":true}");
+    dispatch(bridge.run, seq, req, data);
 }
-
-fn strField(obj: std.json.ObjectMap, name: []const u8) ?[]const u8 {
-    const v = obj.get(name) orelse return null;
-    return switch (v) {
-        .string => |s| s,
-        else => null,
-    };
-}
-
 fn onTick(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
-    const view = WebView{ .webview = data };
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    var max: u32 = 200_000;
-    if (jsonArray(a, req)) |args| {
-        if (args.len >= 1 and args[0] == .string) {
-            if (decodeB64(a, args[0].string)) |bytes| {
-                emu.feedInput(bytes) catch {};
-            } else |_| {}
-        }
-        if (args.len >= 2) {
-            if (jsonU32(args[1])) |m| max = m;
-        }
-    }
-
-    replyStatus(view, seq, a, emu.tick(max));
+    dispatch(bridge.tick, seq, req, data);
 }
-
-fn replyStatus(view: WebView, seq: [:0]const u8, a: std.mem.Allocator, status: emulator.Status) void {
-    const out_b64 = encodeB64(a, emu.takeOutput()) catch "";
-    emu.clearOutput();
-    const tail: []const u8 = switch (status) {
-        .running => "running\"",
-        .halted => "halted\"",
-        .waiting_input => "waiting\"",
-        .exited => |c| std.fmt.allocPrint(a, "exited\",\"code\":{d}", .{c}) catch "exited\"",
-        .sleep_ms => |ms| std.fmt.allocPrint(a, "sleep\",\"ms\":{d}", .{ms}) catch "sleep\"",
-        .breakpoint => |pc| std.fmt.allocPrint(a, "breakpoint\",\"pc\":{d}", .{pc}) catch "breakpoint\"",
-        .fault => |f| std.fmt.allocPrint(a, "fault\",\"code\":{d},\"pc\":{d}", .{ f.code, f.pc }) catch "fault\"",
-    };
-    const json = std.fmt.allocPrintZ(a, "{{\"out\":\"{s}\",\"raw\":{},\"state\":\"{s}}}", .{ out_b64, emu.isRaw(), tail }) catch {
-        view.ret(seq, 0, "{\"state\":\"error\"}");
-        return;
-    };
-    view.ret(seq, 0, json);
-}
-
 fn onDbgStep(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
-    _ = req;
-    const view = WebView{ .webview = data };
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    replyStatus(view, seq, arena.allocator(), emu.stepLine());
+    dispatch(bridge.stepLine, seq, req, data);
 }
-
 fn onDbgBreak(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
-    const view = WebView{ .webview = data };
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    if (jsonArray(arena.allocator(), req)) |args| {
-        if (args.len >= 2) {
-            const on = switch (args[1]) {
-                .bool => |b| b,
-                else => true,
-            };
-            if (jsonU32(args[0])) |addr| emu.setBreak(addr, on);
-        }
-    }
-    view.ret(seq, 0, "{\"ok\":true}");
+    dispatch(bridge.setBreak, seq, req, data);
 }
-
 fn onDbgSnapshot(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
-    _ = req;
-    const view = WebView{ .webview = data };
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const json = buildSnapshot(arena.allocator()) catch {
-        view.ret(seq, 0, "{}");
-        return;
-    };
-    view.ret(seq, 0, json);
+    dispatch(bridge.snapshot, seq, req, data);
 }
-
-fn rd32(ram: []const u8, addr: u32) u32 {
-    return @as(u32, ram[addr]) | (@as(u32, ram[addr + 1]) << 8) | (@as(u32, ram[addr + 2]) << 16) | (@as(u32, ram[addr + 3]) << 24);
-}
-
-fn buildSnapshot(a: std.mem.Allocator) ![:0]const u8 {
-    var buf = std.ArrayList(u8).init(a);
-    const w = buf.writer();
-    try w.print("{{\"pc\":{d},\"brk\":{d},\"flags\":{{\"z\":{},\"n\":{},\"c\":{},\"v\":{}}},\"regs\":[", .{
-        emu.cpu.pc, emu.brk, emu.cpu.f.z, emu.cpu.f.n, emu.cpu.f.c, emu.cpu.f.v,
-    });
-    for (emu.cpu.r, 0..) |v, i| {
-        if (i > 0) try w.writeAll(",");
-        try w.print("{d}", .{v});
-    }
-    try w.writeAll("],\"stack\":[");
-    const sp = emu.cpu.r[13];
-    var first = true;
-    var k: u32 = 0;
-    while (k < 8) : (k += 1) {
-        const addr = sp +% k *% 4;
-        if (@as(u64, addr) + 4 > emu.ram.len) break;
-        if (!first) try w.writeAll(",");
-        first = false;
-        try w.print("{{\"a\":{d},\"v\":{d}}}", .{ addr, rd32(emu.ram, addr) });
-    }
-    try w.writeAll("]}");
-    try buf.append(0);
-    return buf.items[0 .. buf.items.len - 1 :0];
-}
-
 fn onDbgLines(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
-    _ = req;
-    const view = WebView{ .webview = data };
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    var buf = std.ArrayList(u8).init(a);
-    const w = buf.writer();
-    w.writeAll("[") catch return view.ret(seq, 0, "[]");
-    for (emu.line_map.items, 0..) |e, i| {
-        if (i > 0) w.writeAll(",") catch {};
-        w.print("{{\"a\":{d},\"l\":{d}}}", .{ e.addr, e.line }) catch {};
-    }
-    w.writeAll("]") catch {};
-    buf.append(0) catch return view.ret(seq, 0, "[]");
-    view.ret(seq, 0, buf.items[0 .. buf.items.len - 1 :0]);
+    dispatch(bridge.lines, seq, req, data);
 }
-
 fn onStop(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
-    _ = req;
-    emu.started = false;
-    const view = WebView{ .webview = data };
-    view.ret(seq, 0, "{\"ok\":true}");
+    dispatch(bridge.stop, seq, req, data);
 }
-
 fn onSetTermSize(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
-    const view = WebView{ .webview = data };
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    if (jsonArray(arena.allocator(), req)) |args| {
-        if (args.len >= 2) {
-            if (jsonU32(args[0])) |c| emu.term_cols = c;
-            if (jsonU32(args[1])) |r| emu.term_rows = r;
-        }
-    }
-    view.ret(seq, 0, "{\"ok\":true}");
+    dispatch(bridge.setTermSize, seq, req, data);
 }
 
 fn onFileOpen(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
@@ -312,9 +105,9 @@ fn onFileOpen(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
         const a = arena.allocator();
         const path = (dialogs.openDialog(a) catch null) orelse return view.ret(seq, 0, "{\"ok\":false}");
         const content = std.fs.cwd().readFileAlloc(a, path, 16 * 1024 * 1024) catch return view.ret(seq, 0, "{\"ok\":false}");
-        const pb = encodeB64(a, path) catch "";
-        const nb = encodeB64(a, std.fs.path.basename(path)) catch "";
-        const cb = encodeB64(a, content) catch "";
+        const pb = bridge.encodeB64(a, path) catch "";
+        const nb = bridge.encodeB64(a, std.fs.path.basename(path)) catch "";
+        const cb = bridge.encodeB64(a, content) catch "";
         const json = std.fmt.allocPrintZ(a, "{{\"ok\":true,\"path\":\"{s}\",\"name\":\"{s}\",\"content\":\"{s}\"}}", .{ pb, nb, cb }) catch return view.ret(seq, 0, "{\"ok\":false}");
         view.ret(seq, 0, json);
     } else {
@@ -327,7 +120,7 @@ fn onFileSave(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const args = jsonArray(a, req) orelse return view.ret(seq, 0, "{\"ok\":false}");
+    const args = bridge.jsonArray(a, req) orelse return view.ret(seq, 0, "{\"ok\":false}");
     if (args.len < 2) return view.ret(seq, 0, "{\"ok\":false}");
     const path = decodeArg(a, args[0]) orelse return view.ret(seq, 0, "{\"ok\":false}");
     const content = decodeArg(a, args[1]) orelse return view.ret(seq, 0, "{\"ok\":false}");
@@ -341,14 +134,14 @@ fn onFileSaveAs(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena.deinit();
         const a = arena.allocator();
-        const args = jsonArray(a, req) orelse return view.ret(seq, 0, "{\"ok\":false}");
+        const args = bridge.jsonArray(a, req) orelse return view.ret(seq, 0, "{\"ok\":false}");
         if (args.len < 2) return view.ret(seq, 0, "{\"ok\":false}");
         const name = decodeArg(a, args[0]) orelse return view.ret(seq, 0, "{\"ok\":false}");
         const content = decodeArg(a, args[1]) orelse return view.ret(seq, 0, "{\"ok\":false}");
         const path = (dialogs.saveDialog(a, name) catch null) orelse return view.ret(seq, 0, "{\"ok\":false}");
         std.fs.cwd().writeFile(.{ .sub_path = path, .data = content }) catch return view.ret(seq, 0, "{\"ok\":false}");
-        const pb = encodeB64(a, path) catch "";
-        const nb = encodeB64(a, std.fs.path.basename(path)) catch "";
+        const pb = bridge.encodeB64(a, path) catch "";
+        const nb = bridge.encodeB64(a, std.fs.path.basename(path)) catch "";
         const json = std.fmt.allocPrintZ(a, "{{\"ok\":true,\"path\":\"{s}\",\"name\":\"{s}\"}}", .{ pb, nb }) catch return view.ret(seq, 0, "{\"ok\":false}");
         view.ret(seq, 0, json);
     } else {
@@ -358,48 +151,9 @@ fn onFileSaveAs(seq: [:0]const u8, req: [:0]const u8, data: ?*anyopaque) void {
 
 fn decodeArg(a: std.mem.Allocator, v: std.json.Value) ?[]u8 {
     return switch (v) {
-        .string => |s| decodeB64(a, s) catch null,
+        .string => |s| bridge.decodeB64(a, s) catch null,
         else => null,
     };
-}
-
-fn firstStringArg(a: std.mem.Allocator, req: []const u8) ?[]const u8 {
-    const args = jsonArray(a, req) orelse return null;
-    if (args.len < 1) return null;
-    return switch (args[0]) {
-        .string => |s| s,
-        else => null,
-    };
-}
-
-fn jsonArray(a: std.mem.Allocator, req: []const u8) ?[]std.json.Value {
-    const val = std.json.parseFromSliceLeaky(std.json.Value, a, req, .{}) catch return null;
-    return switch (val) {
-        .array => |arr| arr.items,
-        else => null,
-    };
-}
-
-fn jsonU32(v: std.json.Value) ?u32 {
-    return switch (v) {
-        .integer => |n| if (n >= 0) @intCast(n) else null,
-        .float => |f| if (f >= 0) @intFromFloat(f) else null,
-        else => null,
-    };
-}
-
-fn encodeB64(a: std.mem.Allocator, src: []const u8) ![]const u8 {
-    const enc = std.base64.standard.Encoder;
-    const dst = try a.alloc(u8, enc.calcSize(src.len));
-    return enc.encode(dst, src);
-}
-
-fn decodeB64(a: std.mem.Allocator, s: []const u8) ![]u8 {
-    const dec = std.base64.standard.Decoder;
-    const n = try dec.calcSizeForSlice(s);
-    const dst = try a.alloc(u8, n);
-    try dec.decode(dst, s);
-    return dst;
 }
 
 const windows = std.os.windows;
@@ -426,7 +180,9 @@ fn setWindowIcon(w: WebView) void {
 }
 
 test {
-    _ = assemble;
+    _ = @import("assemble.zig");
     _ = emulator;
+    _ = bridge;
+    _ = @import("platform.zig");
     _ = @import("loader.zig");
 }
