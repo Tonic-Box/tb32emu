@@ -2,6 +2,8 @@
 
 A graphical emulator and assembly IDE for the **TB32** instruction set, built on top of [libtb32](https://github.com/Tonic-Box/libtb32).
 
+![img.png](img.png)
+
 ## Build and run
 
 ```
