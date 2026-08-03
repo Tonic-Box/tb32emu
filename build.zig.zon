@@ -1,6 +1,6 @@
 .{
     .name = "tb32emu",
-    .version = "0.0.1",
+    .version = "1.0.0",
     .minimum_zig_version = "0.13.0",
     .dependencies = .{
         .tb32 = .{
