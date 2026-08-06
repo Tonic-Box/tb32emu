@@ -4,6 +4,8 @@ A graphical emulator and assembly IDE for the **TB32** instruction set, built on
 
 This is the CPU ISO that [TonicBoxOS](https://tonicbox.dev/) is built on.
 
+- The emulator is also web-hosted here: [https://emulator.tonicbox.dev/](https://emulator.tonicbox.dev/)
+
 ![img.png](img.png)
 
 ## Build and run
